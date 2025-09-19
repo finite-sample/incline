@@ -50,9 +50,9 @@ class TestLocalLinearTrend:
         )
         model.fit(y)
         
-        assert model.fitted_params['obs_variance'] == 0.1
-        assert model.fitted_params['level_variance'] == 0.05
-        assert model.fitted_params['slope_variance'] == 0.01
+        assert model.fitted_params['obs_variance'] == pytest.approx(0.1)
+        assert model.fitted_params['level_variance'] == pytest.approx(0.05)
+        assert model.fitted_params['slope_variance'] == pytest.approx(0.01)
         
     def test_local_linear_trend_get_components(self):
         """Test getting level and slope estimates."""

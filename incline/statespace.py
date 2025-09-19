@@ -63,6 +63,7 @@ class LocalLinearTrend:
         self.fitted_params = None
         self.filter_results = None
         self.smoother_results = None
+        self._kalman_filter = None
 
     def _setup_kalman_filter(self, y: np.ndarray):
         """Set up the Kalman filter for local linear trend."""
@@ -79,8 +80,8 @@ class LocalLinearTrend:
         # Selection matrix (which states get innovations)
         selection = np.eye(2)
 
-        # Initialize Kalman filter
-        kf = KalmanFilter(
+        # Initialize Kalman smoother (includes filter functionality)
+        kf = KalmanSmoother(
             k_endog=1,  # Number of observed variables
             k_states=2,  # Number of state variables
             design=design,
@@ -105,7 +106,7 @@ class LocalLinearTrend:
         kf.initialize_approximate_diffuse(variance=1e6)
 
         try:
-            # Bind data and run filter
+            # Bind data and run filter (smoother has filter method)
             kf.bind(endog=y)
             results = kf.filter()
             return -results.loglikelihood_burn  # Return negative for minimization
@@ -192,10 +193,15 @@ class LocalLinearTrend:
 
         # Bind data and run filter and smoother
         kf.bind(endog=y)
-        self.filter_results = kf.filter()
         
-        # Use filter results to get smoothed estimates
-        self.smoother_results = self.filter_results.smooth()
+        # Store the KalmanSmoother for access later
+        self._kalman_filter = kf
+        
+        # Run smoother (which includes filtering)
+        self.smoother_results = kf.smooth()
+        
+        # Filter results are accessible through smoother_results
+        self.filter_results = self.smoother_results
 
         return self
 
@@ -223,6 +229,9 @@ class LocalLinearTrend:
         # Level is the first state
         level = self.smoother_results.smoothed_state[0, :]
         level_var = self.smoother_results.smoothed_state_cov[0, 0, :]
+        
+        # Ensure non-negative variance (numerical stability)
+        level_var = np.maximum(level_var, 1e-12)
         level_se = np.sqrt(level_var)
 
         # Confidence intervals
@@ -259,6 +268,9 @@ class LocalLinearTrend:
         # Slope is the second state
         slope = self.smoother_results.smoothed_state[1, :]
         slope_var = self.smoother_results.smoothed_state_cov[1, 1, :]
+        
+        # Ensure non-negative variance (numerical stability)
+        slope_var = np.maximum(slope_var, 1e-12)
         slope_se = np.sqrt(slope_var)
 
         # Confidence intervals
