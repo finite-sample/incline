@@ -71,10 +71,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/soodoku/incline"
-Documentation = "https://soodoku.github.io/incline/"
-Repository = "https://github.com/soodoku/incline"
-Issues = "https://github.com/soodoku/incline/issues"
+Homepage = "https://github.com/finite-sample/incline"
+Documentation = "https://finite-sample.github.io/incline/"
+Repository = "https://github.com/finite-sample/incline"
+Issues = "https://github.com/finite-sample/incline/issues"
 
 [tool.setuptools]
 packages = ["incline"]

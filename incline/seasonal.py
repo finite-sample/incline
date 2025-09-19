@@ -421,13 +421,18 @@ def trend_with_deseasonalization(
         from .advanced import loess_trend, estimate_trend
 
         if trend_method == 'spline':
-            return spline_trend(df, column_value, time_column, **trend_kwargs)
+            trend_result = spline_trend(df, column_value, time_column, **trend_kwargs)
         elif trend_method == 'sgolay':
-            return sgolay_trend(df, column_value, time_column, **trend_kwargs)
+            trend_result = sgolay_trend(df, column_value, time_column, **trend_kwargs)
         elif trend_method == 'loess':
-            return loess_trend(df, column_value, time_column, **trend_kwargs)
+            trend_result = loess_trend(df, column_value, time_column, **trend_kwargs)
         else:
-            return estimate_trend(df, column_value, time_column, trend_method, **trend_kwargs)
+            trend_result = estimate_trend(df, column_value, time_column, trend_method, **trend_kwargs)
+        
+        # Add seasonality information
+        trend_result['seasonality_detected'] = seasonality_info['seasonal']
+        trend_result['seasonality_strength'] = seasonality_info['strength']
+        return trend_result
 
     # Perform seasonal decomposition
     if decomposition_method == 'auto':

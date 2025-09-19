@@ -289,6 +289,10 @@ def trending(df_list,
         if robust or max_or_avg in ['trimmed_mean', 'huber']:
             warnings.warn("scipy.stats not available, falling back to basic statistics")
 
+    # Check for empty input
+    if not df_list:
+        raise ValueError("No valid data found for trending analysis")
+    
     # Collect data from all time series
     cdf = []
     for df in df_list:
@@ -297,7 +301,7 @@ def trending(df_list,
             cdf.append(series_data)
 
     if not cdf:
-        # Return empty DataFrame with expected structure
+        # Return empty DataFrame when no matching derivative_order found
         return pd.DataFrame(columns=[column_id, 'rank', 'derivative_value', 'trend_strength'])
 
     tdf = pd.concat(cdf, sort=False)
