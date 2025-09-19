@@ -34,7 +34,7 @@ jobs:
         pip install build
     - name: Install package and run tests
       run: |
-        pip install -e .[test]
+        pip install -e .[test,advanced]
         # Run tests to ensure package is working
         pytest
         # Run critical linting checks
