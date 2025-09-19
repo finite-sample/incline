@@ -23,6 +23,7 @@ The package provides a way to estimate the first and second derivative at any gi
    quickstart
    api
    examples
+   limitations
 
 Installation
 ============
