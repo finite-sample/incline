@@ -20,12 +20,7 @@ The package provides a couple of ways of approximating the underlying function f
 
 The package provides a way to estimate the first and second derivative at any given time using either of those methods. Beyond these smarter methods, the package also provides a way a naive estimator of slope---average change when you move one-step forward (step = observed time units) and one-step backward. The users can also calculate average or max. slope over a time window (over observed time steps).
 
-The difference between naive estimates and estimates based on smoothed time series can be substantial. In the `example <incline/examples/incline_example.ipynb>`__ we provide, the correlation is -.47.
-
-.. figure:: trend.png
-   :scale: 100 %
-   :alt: Example of derivatives
-
+The difference between naive estimates and estimates based on smoothed time series can be substantial. In the `example <https://github.com/finite-sample/incline/blob/master/incline/examples/incline_example.ipynb>`__ we provide, the correlation is -.47.
 
 Clarification
 ~~~~~~~~~~~~~
@@ -182,7 +177,7 @@ Usage
 Examples
 ~~~~~~~~
 
-Please look at this `notebook <https://github.com/soodoku/incline/blob/master/incline/examples/incline_example.ipynb>`_. for how to use incline using data from the stock market.
+Please look at this `notebook <https://github.com/finite-sample/incline/blob/master/incline/examples/incline_example.ipynb>`_. for how to use incline using data from the stock market.
 
 License
 ~~~~~~~
