@@ -105,8 +105,9 @@ class LocalLinearTrend:
         kf.initialize_approximate_diffuse(variance=1e6)
 
         try:
-            # Run filter
-            results = kf.filter(y)
+            # Bind data and run filter
+            kf.bind(endog=y)
+            results = kf.filter()
             return -results.loglikelihood_burn  # Return negative for minimization
         except np.linalg.LinAlgError:
             return np.inf
@@ -189,9 +190,12 @@ class LocalLinearTrend:
         kf['state_cov', 1, 1] = self.fitted_params['slope_variance']
         kf.initialize_approximate_diffuse(variance=1e6)
 
-        # Run filter and smoother
-        self.filter_results = kf.filter(y)
-        self.smoother_results = kf.smooth(y)
+        # Bind data and run filter and smoother
+        kf.bind(endog=y)
+        self.filter_results = kf.filter()
+        
+        # Use filter results to get smoothed estimates
+        self.smoother_results = self.filter_results.smooth()
 
         return self
 

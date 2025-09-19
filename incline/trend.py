@@ -292,12 +292,13 @@ def trending(df_list,
     # Collect data from all time series
     cdf = []
     for df in df_list:
-        series_data = df[df.derivative_order == derivative_order][-k:]
+        series_data = df[df['derivative_order'] == derivative_order][-k:]
         if len(series_data) > 0:
             cdf.append(series_data)
 
     if not cdf:
-        raise ValueError("No valid data found for trending analysis")
+        # Return empty DataFrame with expected structure
+        return pd.DataFrame(columns=[column_id, 'rank', 'derivative_value', 'trend_strength'])
 
     tdf = pd.concat(cdf, sort=False)
 
@@ -404,21 +405,21 @@ def _huber_mean(x: np.ndarray, c: float = 1.345) -> float:
     if n == 1:
         return x[0]
 
-    # Initial estimate
-    mu = np.median(x)
-    sigma = np.median(np.abs(x - mu)) / 0.6745  # MAD scale estimate
+    # Initial estimate - use mean for better convergence properties
+    mu = np.mean(x)
+    sigma = np.median(np.abs(x - np.median(x))) / 0.6745  # MAD scale estimate
 
     if sigma == 0:
         return mu
 
     # Iterative reweighting
-    for _ in range(10):  # Max iterations
+    for _ in range(20):  # More iterations for better convergence
         residuals = (x - mu) / sigma
-        weights = np.where(np.abs(residuals) <= c, 1.0, c / np.abs(residuals))
+        weights = np.where(np.abs(residuals) <= c, 1.0, c / (np.abs(residuals) + 1e-10))
 
         mu_new = np.sum(weights * x) / np.sum(weights)
 
-        if abs(mu_new - mu) < 1e-6:
+        if abs(mu_new - mu) < 1e-8:  # Tighter convergence
             break
         mu = mu_new
 

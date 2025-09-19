@@ -326,11 +326,12 @@ def simple_deseasonalize(
 
         for i in range(half_window, n - half_window):
             # Weighted moving average for even periods
-            weights = np.ones(window)
-            weights[0] = weights[-1] = 0.5
             start_idx = i - half_window
             end_idx = i + half_window
-            trend[i] = np.average(y[start_idx:end_idx+1], weights=weights)
+            data_slice = y[start_idx:end_idx+1]
+            weights = np.ones(len(data_slice))
+            weights[0] = weights[-1] = 0.5
+            trend[i] = np.average(data_slice, weights=weights)
     else:
         # Simple centered moving average for odd periods
         trend = pd.Series(y).rolling(window=window, center=True).mean().values
