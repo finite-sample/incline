@@ -89,7 +89,7 @@ The package ``incline`` exposes 4 functions:
     -  df: pandas dataFrame `time series
        object <https://pandas.pydata.org/pandas-docs/stable/timeseries.html>`__
     -  function\_order: spline order (default is 3)---fitting with cubic
-       splines. The number of knots are chosen with cross-validation.
+       splines. The knot placement is determined by the smoothing factor s.
     -  derivative\_order: (0, 1, 2, ... with default as 1)
     -  s: smoothing factor. the total unnormalized global cost that we are willing to bear. larger values give more smoothed estimates. See the 
        `documentation <https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.UnivariateSpline.html>`__ for details. 

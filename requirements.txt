@@ -1,2 +1,4 @@
-pandas
-scipy
+# Production dependencies (keep for ReadTheDocs compatibility)
+pandas>=1.0.0
+numpy>=1.18.0
+scipy>=1.4.0

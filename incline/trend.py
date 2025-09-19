@@ -21,8 +21,8 @@ def naive_trend(df, column_value='value'):
     y_1 = y.shift(1)
     y_2 = y.shift(-1)
 
-    y1_diff = y_1 - y
-    yneg1_diff = y - y-2
+    y1_diff = y - y_1  # backward difference
+    yneg1_diff = y_2 - y  # forward difference
 
     yy = pd.concat([y.rename('orig'),
                     y_1.rename('plus_1'),
