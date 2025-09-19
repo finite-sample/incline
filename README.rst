@@ -5,7 +5,7 @@ incline: Estimate Trend at a Particular Point in a Noisy Time Series
     :target: https://pypi.python.org/pypi/incline
 .. image:: https://static.pepy.tech/badge/incline
     :target: https://pepy.tech/project/incline
-.. image:: https://github.com/finite-sample/incline/workflows/test/badge.svg
+.. image:: https://github.com/finite-sample/incline/workflows/ci/badge.svg
     :target: https://github.com/finite-sample/incline/actions?query=workflow%3Atest
 .. image:: https://img.shields.io/badge/docs-github.io-blue
     :target: https://finite-sample.github.io/incline/
