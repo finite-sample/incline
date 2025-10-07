@@ -1,6 +1,15 @@
 incline: Estimate Trend at a Particular Point in a Noisy Time Series
 -----------------------------------------------------------------------
 
+.. image:: https://img.shields.io/pypi/v/incline.svg
+    :target: https://pypi.python.org/pypi/incline
+.. image:: https://static.pepy.tech/badge/incline
+    :target: https://pepy.tech/project/incline
+.. image:: https://github.com/finite-sample/incline/actions/workflows/ci.yml/badge.svg
+    :target: https://github.com/finite-sample/incline/actions?query=workflow%3Aci
+.. image:: https://img.shields.io/badge/docs-github.io-blue
+    :target: https://finite-sample.github.io/incline/
+
 Trends in time series are valuable. If the cost of a product rises suddenly, it likely indicates a sudden shortfall in supply or a sudden rise in demand. If the cost of claims filed by a patient rises sharply, it may suggest rapidly worsening health. But how do we estimate the trend at a particular time in a noisy time series? Smooth the time series using any one of the many methods, local polynomials or via GAMs or similar such methods, and then estimate the derivative(s) of the function at the chosen point in time.
 
 The package provides a couple of ways of approximating the underlying function for the time series:
@@ -10,6 +19,8 @@ The package provides a couple of ways of approximating the underlying function f
 - fitting a smoothing spline
 
 The package provides a way to estimate the first and second derivative at any given time using either of those methods. Beyond these smarter methods, the package also provides a way a naive estimator of slope---average change when you move one-step forward (step = observed time units) and one-step backward. The users can also calculate average or max. slope over a time window (over observed time steps).
+
+The difference between naive estimates and estimates based on smoothed time series can be substantial. In the `example <https://github.com/finite-sample/incline/blob/master/incline/examples/incline_example.ipynb>`__ we provide, the correlation is -.47.
 
 Clarification
 ~~~~~~~~~~~~~
@@ -77,7 +88,7 @@ The package ``incline`` exposes 4 functions:
     -  df: pandas dataFrame `time series
        object <https://pandas.pydata.org/pandas-docs/stable/timeseries.html>`__
     -  function\_order: spline order (default is 3)---fitting with cubic
-       splines. The number of knots are chosen with cross-validation.
+       splines. The knot placement is determined by the smoothing factor s.
     -  derivative\_order: (0, 1, 2, ... with default as 1)
     -  s: smoothing factor. the total unnormalized global cost that we are willing to bear. larger values give more smoothed estimates. See the 
        `documentation <https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.UnivariateSpline.html>`__ for details. 
@@ -166,7 +177,7 @@ Usage
 Examples
 ~~~~~~~~
 
-Please look at this `notebook <https://github.com/soodoku/incline/blob/master/incline/examples/incline_example.ipynb>`_. for how to use incline using data from the stock market.
+Please look at this `notebook <https://github.com/finite-sample/incline/blob/master/incline/examples/incline_example.ipynb>`_. for how to use incline using data from the stock market.
 
 License
 ~~~~~~~

@@ -1,0 +1,45 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "incline: Comprehensive Trend Estimation for Noisy Time Series"
+version: "0.3.0"
+date-released: "2025-01-01"
+url: "https://github.com/finite-sample/incline"
+repository-code: "https://github.com/finite-sample/incline"
+repository-artifact: "https://pypi.org/project/incline/"
+abstract: >-
+  A comprehensive Python package for estimating trends and derivatives in noisy time series data. 
+  Provides 22+ advanced methods including Savitzky-Golay filters, spline interpolation, 
+  Gaussian Process regression, state-space models, multiscale analysis (SiZer), and robust statistics.
+keywords:
+  - time-series
+  - derivative
+  - slope
+  - trend
+  - savitzky-golay
+  - spline
+  - gaussian-process
+  - kalman-filter
+  - robust-statistics
+  - multiscale-analysis
+license: MIT
+authors:
+  - family-names: "Laohaprapanon"
+    given-names: "Suriyan"
+    email: "suriyant@gmail.com"
+  - family-names: "Sood"
+    given-names: "Gaurav"
+    email: "gsood07@gmail.com"
+preferred-citation:
+  type: software
+  title: "incline: Comprehensive Trend Estimation for Noisy Time Series"
+  authors:
+    - family-names: "Laohaprapanon"
+      given-names: "Suriyan"
+      email: "suriyant@gmail.com"
+    - family-names: "Sood"
+      given-names: "Gaurav"
+      email: "gsood07@gmail.com"
+  version: "0.3.0"
+  date-released: "2025-01-01"
+  url: "https://github.com/finite-sample/incline"
