@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.21.1"]
+build-backend = "hatchling.build"
 
 [project]
 name = "incline"
@@ -11,17 +11,17 @@ authors = [
     {name = "Gaurav Sood", email = "gsood07@gmail.com"}
 ]
 readme = "README.rst"
-license = "MIT"
-requires-python = ">=3.10"
+license = { text = "MIT" }
+requires-python = ">=3.11"
 keywords = ["time-series", "derivative", "slope", "trend", "savitzky-golay", "spline"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Utilities"
@@ -33,40 +33,33 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "check-manifest",
-    "sphinx>=4.0.0",
-    "sphinx-rtd-theme",
-    "myst-parser",
-    "jupyter",
-    "matplotlib"
-]
-test = [
-    "pytest>=6.0",
-    "pytest-cov",
-    "coverage",
-    "flake8"
-]
-docs = [
-    "sphinx>=4.0.0",
-    "sphinx-rtd-theme",
-    "myst-parser",
-    "sphinx-autoapi"
-]
 advanced = [
     "statsmodels>=0.13.0",
     "scikit-learn>=1.0.0",
     "matplotlib>=3.5.0"
 ]
-all = [
-    "statsmodels>=0.13.0",
-    "scikit-learn>=1.0.0", 
-    "matplotlib>=3.5.0",
-    "sphinx>=4.0.0",
-    "sphinx-rtd-theme",
-    "myst-parser",
-    "pytest>=6.0",
-    "pytest-cov",
+docs = [
+    "sphinx>=7.0",
+    "furo>=2024.1.29",
+    "myst-parser>=2.0",
+    "sphinx-autoapi>=3.0",
+    "sphinx-autodoc-typehints>=1.25"
+]
+
+[dependency-groups]
+dev = [
+    "check-manifest",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.7.0",
+    "mypy>=1.0",
+    "pre-commit>=3.0",
+    "jupyter",
+    "matplotlib"
+]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
     "coverage"
 ]
 
@@ -76,18 +69,21 @@ Documentation = "https://finite-sample.github.io/incline/"
 Repository = "https://github.com/finite-sample/incline"
 Issues = "https://github.com/finite-sample/incline/issues"
 
-[tool.setuptools]
+[tool.hatch.build.targets.wheel]
 packages = ["incline"]
 
-[tool.setuptools.package-data]
-incline = ["data/*.csv", "examples/*.ipynb"]
+[tool.hatch.build]
+include = [
+  "incline/data/*.csv",
+  "incline/examples/*.ipynb"
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v"
+addopts = "--cov=incline --cov-report=html --cov-report=term-missing -v"
 
 [tool.coverage.run]
 source = ["incline"]
@@ -105,41 +101,47 @@ exclude_lines = [
     "if __name__ == .__main__.:"
 ]
 
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ['py310']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
-line_length = 88
-
-[tool.flake8]
-max-line-length = 88
-extend-ignore = ["E203", "E501", "W503"]
+target-version = "py311"
 exclude = [
-    ".git",
-    "__pycache__",
-    "build",
-    "dist",
-    ".eggs",
-    "*.egg-info"
+  ".git",
+  "__pycache__",
+  "build",
+  "dist",
+  ".venv",
+  "docs",
+  ".eggs",
+  "*.egg-info",
+  "*.ipynb"
 ]
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle errors
+  "W",  # pycodestyle warnings
+  "F",  # pyflakes
+  "I",  # isort
+  "B",  # flake8-bugbear
+  "C4", # flake8-comprehensions
+  "UP", # pyupgrade
+]
+ignore = [
+  "E501",  # line too long (handled by formatter)
+  "B008",  # do not perform function calls in argument defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["S101"]
+"examples/*" = ["E402", "F841", "E722"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["incline"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+check_untyped_defs = true
+ignore_missing_imports = true
