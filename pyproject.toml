@@ -60,7 +60,8 @@ dev = [
 test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "coverage"
+    "coverage",
+    "ruff>=0.7.0"
 ]
 
 [project.urls]
@@ -117,27 +118,76 @@ exclude = [
 ]
 
 [tool.ruff.lint]
+# Enable comprehensive rule set for style and quality
 select = [
-  "E",  # pycodestyle errors
-  "W",  # pycodestyle warnings
-  "F",  # pyflakes
-  "I",  # isort
-  "B",  # flake8-bugbear
-  "C4", # flake8-comprehensions
-  "UP", # pyupgrade
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # isort
+  "B",   # flake8-bugbear
+  "C4",  # flake8-comprehensions
+  "UP",  # pyupgrade
+  "N",   # pep8-naming
+  "D",   # pydocstyle (docstrings)
+  "S",   # bandit (security)
+  "T20", # flake8-print
+  "PT",  # flake8-pytest-style
+  "RUF", # ruff-specific rules
 ]
+
 ignore = [
   "E501",  # line too long (handled by formatter)
   "B008",  # do not perform function calls in argument defaults
+  "D100",  # missing docstring in public module
+  "D101",  # missing docstring in public class
+  "D102",  # missing docstring in public method
+  "D103",  # missing docstring in public function
+  "D104",  # missing docstring in public package
+  "D105",  # missing docstring in magic method
+  "S101",  # use of assert (allowed in tests)
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]
-"tests/*" = ["S101"]
-"examples/*" = ["E402", "F841", "E722"]
+# Package init files
+"__init__.py" = ["F401", "D104"]
+
+# Test files - more relaxed rules
+"tests/*" = [
+  "S101",   # assert allowed in tests
+  "F841",   # unused variable (test artifacts)
+  "D",      # no docstring requirements
+  "T20",    # print statements allowed
+  "N",      # naming conventions relaxed
+]
+
+# Example files - demo clarity over strict style
+"examples/*" = [
+  "E402",   # imports not at top
+  "F841",   # unused variables for illustration
+  "E722",   # bare except for simple examples
+  "T20",    # print statements for output
+  "D",      # no docstring requirements
+]
+
+# Documentation files
+"docs/*" = [
+  "D",      # no docstring requirements
+  "T20",    # print statements allowed
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["incline"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 [tool.mypy]
 python_version = "3.11"

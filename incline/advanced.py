@@ -1,5 +1,4 @@
-"""
-Advanced trend estimation methods for incline package.
+"""Advanced trend estimation methods for incline package.
 
 This module provides more sophisticated trend estimation techniques beyond
 the basic Savitzky-Golay and spline methods, including local polynomial
@@ -8,19 +7,19 @@ regression, trend filtering, and state-space models.
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Union, Tuple, Literal
-import warnings
+
 
 # Check for optional dependencies
 try:
     from statsmodels.nonparametric.smoothers_lowess import lowess
+
     HAS_STATSMODELS = True
 except ImportError:
     HAS_STATSMODELS = False
 
 try:
-    from sklearn.linear_model import Ridge
     from sklearn.preprocessing import PolynomialFeatures
+
     HAS_SKLEARN = True
 except ImportError:
     HAS_SKLEARN = False
@@ -30,15 +29,14 @@ from .trend import compute_time_deltas
 
 def loess_trend(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
+    column_value: str = "value",
+    time_column: str | None = None,
     frac: float = 0.3,
     derivative_order: int = 1,
     degree: int = 1,
-    robust: bool = True
+    robust: bool = True,
 ) -> pd.DataFrame:
-    """
-    Estimate trend using LOESS (locally weighted scatterplot smoothing).
+    """Estimate trend using LOESS (locally weighted scatterplot smoothing).
 
     LOESS fits local polynomial regressions to estimate the derivative at each point.
     This is the canonical nonparametric derivative estimator with good statistical
@@ -61,12 +59,12 @@ def loess_trend(
     robust : bool
         Use robust fitting to downweight outliers
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         Original data plus smoothed values and derivatives
 
-    Notes
+    Notes:
     -----
     This function wraps statsmodels LOWESS and estimates derivatives by
     fitting local polynomials in a sliding window around each point.
@@ -84,17 +82,18 @@ def loess_trend(
     if time_column:
         x = df[time_column].values
     elif isinstance(df.index, pd.DatetimeIndex):
-        x, delta = compute_time_deltas(df.index)
+        x, _delta = compute_time_deltas(df.index)
     else:
         x = np.arange(len(df), dtype=float)
 
     # Apply LOWESS for smoothing
     smoothed_result = lowess(
-        y, x,
+        y,
+        x,
         frac=frac,
         it=3 if robust else 0,  # iterations for robust fitting
         delta=0.0,  # no delta approximation
-        return_sorted=False
+        return_sorted=False,
     )
 
     smoothed_values = smoothed_result
@@ -143,28 +142,27 @@ def loess_trend(
 
     # Create output dataframe
     odf = df.copy()
-    odf['smoothed_value'] = smoothed_values
-    odf['derivative_value'] = derivatives
-    odf['function_order'] = degree
-    odf['derivative_method'] = 'loess'
-    odf['derivative_order'] = derivative_order
-    odf['bandwidth'] = frac
-    odf['robust'] = robust
+    odf["smoothed_value"] = smoothed_values
+    odf["derivative_value"] = derivatives
+    odf["function_order"] = degree
+    odf["derivative_method"] = "loess"
+    odf["derivative_order"] = derivative_order
+    odf["bandwidth"] = frac
+    odf["robust"] = robust
 
     return odf
 
 
 def l1_trend_filter(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
+    column_value: str = "value",
+    time_column: str | None = None,
     lambda_param: float = 1.0,
     derivative_order: int = 1,
     max_iter: int = 100,
-    tol: float = 1e-4
+    tol: float = 1e-4,
 ) -> pd.DataFrame:
-    """
-    Estimate trend using L1 trend filtering (fused lasso).
+    """Estimate trend using L1 trend filtering (fused lasso).
 
     L1 trend filtering fits piecewise polynomial trends by penalizing
     discrete differences. This produces sparse changepoints and is
@@ -187,12 +185,12 @@ def l1_trend_filter(
     tol : float
         Convergence tolerance
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         Original data plus trend estimates and changepoints
 
-    Notes
+    Notes:
     -----
     This implements the L1 trend filtering algorithm using ADMM.
     The result is a piecewise polynomial trend with sparse changes.
@@ -213,43 +211,43 @@ def l1_trend_filter(
     # Create difference matrix
     if derivative_order == 1:
         # First-order differences (piecewise linear)
-        D = np.diff(np.eye(n), axis=0)
+        diff_matrix = np.diff(np.eye(n), axis=0)
     elif derivative_order == 2:
         # Second-order differences (piecewise quadratic)
-        D = np.diff(np.eye(n), n=2, axis=0)
+        diff_matrix = np.diff(np.eye(n), n=2, axis=0)
     else:
         raise ValueError("derivative_order must be 1 or 2")
 
     # Scale by time step
-    D = D / (delta ** derivative_order)
+    diff_matrix = diff_matrix / (delta**derivative_order)
 
     # Solve L1 trend filtering using ADMM
     # min_x (1/2)||y - x||_2^2 + lambda||Dx||_1
 
     # ADMM variables
     x_trend = y.copy()  # primal variable
-    z = np.zeros(D.shape[0])  # auxiliary variable
-    u = np.zeros(D.shape[0])  # dual variable
+    z = np.zeros(diff_matrix.shape[0])  # auxiliary variable
+    u = np.zeros(diff_matrix.shape[0])  # dual variable
 
     rho = 1.0  # ADMM penalty parameter
 
     # Precompute matrices for efficiency
-    DTD = D.T @ D
-    I = np.eye(n)
-    A_inv = np.linalg.inv(I + rho * DTD)
+    dtd = diff_matrix.T @ diff_matrix
+    identity_matrix = np.eye(n)
+    a_inv = np.linalg.inv(identity_matrix + rho * dtd)
 
-    for iteration in range(max_iter):
+    for _iteration in range(max_iter):
         x_old = x_trend.copy()
 
         # x-update (quadratic)
-        x_trend = A_inv @ (y + rho * D.T @ (z - u))
+        x_trend = a_inv @ (y + rho * diff_matrix.T @ (z - u))
 
         # z-update (soft thresholding)
-        Dx_plus_u = D @ x_trend + u
-        z = soft_threshold(Dx_plus_u, lambda_param / rho)
+        dx_plus_u = diff_matrix @ x_trend + u
+        z = soft_threshold(dx_plus_u, lambda_param / rho)
 
         # u-update (dual)
-        u = u + D @ x_trend - z
+        u = u + diff_matrix @ x_trend - z
 
         # Check convergence
         if np.linalg.norm(x_trend - x_old) < tol:
@@ -261,7 +259,7 @@ def l1_trend_filter(
         # Extend to original length
         derivatives = np.concatenate([derivatives, [derivatives[-1]]])
     else:
-        derivatives = np.diff(x_trend, n=2) / (delta ** 2)
+        derivatives = np.diff(x_trend, n=2) / (delta**2)
         # Extend to original length
         derivatives = np.concatenate([[derivatives[0]], derivatives, [derivatives[-1]]])
 
@@ -270,20 +268,20 @@ def l1_trend_filter(
         changes = np.abs(np.diff(derivatives)) > 0.1 * np.std(derivatives)
         changepoints = np.zeros(n, dtype=bool)
         if len(changes) > 0:
-            changepoints[1:1+len(changes)] = changes
+            changepoints[1 : 1 + len(changes)] = changes
     else:
         changes = np.abs(derivatives) > 0.1 * np.std(derivatives)
         changepoints = changes
 
     # Create output dataframe
     odf = df.copy()
-    odf['smoothed_value'] = x_trend
-    odf['derivative_value'] = derivatives
-    odf['function_order'] = derivative_order
-    odf['derivative_method'] = 'l1_filter'
-    odf['derivative_order'] = derivative_order
-    odf['lambda'] = lambda_param
-    odf['changepoint'] = changepoints
+    odf["smoothed_value"] = x_trend
+    odf["derivative_value"] = derivatives
+    odf["function_order"] = derivative_order
+    odf["derivative_method"] = "l1_filter"
+    odf["derivative_order"] = derivative_order
+    odf["lambda"] = lambda_param
+    odf["changepoint"] = changepoints
 
     return odf
 
@@ -295,15 +293,14 @@ def soft_threshold(x: np.ndarray, threshold: float) -> np.ndarray:
 
 def local_polynomial_trend(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
+    column_value: str = "value",
+    time_column: str | None = None,
     bandwidth: float = 0.2,
     degree: int = 1,
-    kernel: str = 'gaussian',
-    derivative_order: int = 1
+    kernel: str = "gaussian",
+    derivative_order: int = 1,
 ) -> pd.DataFrame:
-    """
-    Local polynomial trend estimation with kernel weighting.
+    """Local polynomial trend estimation with kernel weighting.
 
     This implements the Fan-Gijbels local polynomial estimator, which is
     the theoretical foundation for nonparametric derivative estimation.
@@ -325,7 +322,7 @@ def local_polynomial_trend(
     derivative_order : int
         Order of derivative to estimate
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         Results with smoothed values and derivatives
@@ -343,7 +340,7 @@ def local_polynomial_trend(
     if time_column:
         x = df[time_column].values
     elif isinstance(df.index, pd.DatetimeIndex):
-        x, delta = compute_time_deltas(df.index)
+        x, _delta = compute_time_deltas(df.index)
     else:
         x = np.arange(n, dtype=float)
 
@@ -359,11 +356,11 @@ def local_polynomial_trend(
         """Compute kernel weights for given distances."""
         u = distances / h
 
-        if kernel_type == 'gaussian':
+        if kernel_type == "gaussian":
             return np.exp(-0.5 * u**2)
-        elif kernel_type == 'epanechnikov':
+        elif kernel_type == "epanechnikov":
             return np.maximum(0, 0.75 * (1 - u**2))
-        elif kernel_type == 'uniform':
+        elif kernel_type == "uniform":
             return (np.abs(u) <= 1).astype(float)
         else:
             raise ValueError(f"Unknown kernel: {kernel_type}")
@@ -389,14 +386,14 @@ def local_polynomial_trend(
 
         # Create polynomial features
         poly = PolynomialFeatures(degree=degree, include_bias=True)
-        X_local = poly.fit_transform(x_local.reshape(-1, 1))
+        x_local_matrix = poly.fit_transform(x_local.reshape(-1, 1))
 
         # Weighted least squares
         try:
             # Manual weighted least squares
-            W = np.diag(w_local)
-            XTW = X_local.T @ W
-            coeffs = np.linalg.solve(XTW @ X_local, XTW @ y_local)
+            weight_matrix = np.diag(w_local)
+            xtw = x_local_matrix.T @ weight_matrix
+            coeffs = np.linalg.solve(xtw @ x_local_matrix, xtw @ y_local)
 
             # Evaluate at center point (x_local = 0)
             smoothed_values[i] = coeffs[0]  # constant term
@@ -415,13 +412,13 @@ def local_polynomial_trend(
 
     # Create output dataframe
     odf = df.copy()
-    odf['smoothed_value'] = smoothed_values
-    odf['derivative_value'] = derivatives
-    odf['function_order'] = degree
-    odf['derivative_method'] = 'local_poly'
-    odf['derivative_order'] = derivative_order
-    odf['bandwidth'] = bandwidth
-    odf['kernel'] = kernel
+    odf["smoothed_value"] = smoothed_values
+    odf["derivative_value"] = derivatives
+    odf["function_order"] = degree
+    odf["derivative_method"] = "local_poly"
+    odf["derivative_order"] = derivative_order
+    odf["bandwidth"] = bandwidth
+    odf["kernel"] = kernel
 
     return odf
 
@@ -429,12 +426,11 @@ def local_polynomial_trend(
 # Selection function for automatic method choice
 def select_trend_method(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
-    criteria: str = 'auto'
+    column_value: str = "value",
+    time_column: str | None = None,
+    criteria: str = "auto",
 ) -> str:
-    """
-    Automatically select the best trend estimation method for the data.
+    """Automatically select the best trend estimation method for the data.
 
     Parameters
     ----------
@@ -447,7 +443,7 @@ def select_trend_method(
     criteria : str
         Selection criteria ('auto', 'robust', 'smooth', 'changepoints')
 
-    Returns
+    Returns:
     -------
     str
         Recommended method name
@@ -467,36 +463,34 @@ def select_trend_method(
 
     # Estimate noise level and trend strength
     noise_level = np.std(np.diff(y, n=2))  # second differences
-    trend_strength = np.std(np.diff(y))    # first differences
+    trend_strength = np.std(np.diff(y))  # first differences
     signal_to_noise = trend_strength / (noise_level + 1e-10)
 
     # Check for outliers
     q75, q25 = np.percentile(y, [75, 25])
     iqr = q75 - q25
-    outlier_fraction = np.mean(
-        (y < q25 - 1.5 * iqr) | (y > q75 + 1.5 * iqr)
-    )
+    outlier_fraction = np.mean((y < q25 - 1.5 * iqr) | (y > q75 + 1.5 * iqr))
 
-    if criteria == 'auto':
+    if criteria == "auto":
         if outlier_fraction > 0.1:
-            return 'loess'  # Robust to outliers
+            return "loess"  # Robust to outliers
         elif signal_to_noise < 2:
-            return 'spline'  # Good for noisy data
+            return "spline"  # Good for noisy data
         elif not time_regular:
-            return 'local_poly'  # Handles irregular sampling
+            return "local_poly"  # Handles irregular sampling
         elif n < 50:
-            return 'sgolay'  # Simple for small datasets
+            return "sgolay"  # Simple for small datasets
         else:
-            return 'loess'  # Generally robust choice
+            return "loess"  # Generally robust choice
 
-    elif criteria == 'robust':
-        return 'loess' if HAS_STATSMODELS else 'l1_filter'
+    elif criteria == "robust":
+        return "loess" if HAS_STATSMODELS else "l1_filter"
 
-    elif criteria == 'smooth':
-        return 'spline'
+    elif criteria == "smooth":
+        return "spline"
 
-    elif criteria == 'changepoints':
-        return 'l1_filter'
+    elif criteria == "changepoints":
+        return "l1_filter"
 
     else:
         raise ValueError(f"Unknown criteria: {criteria}")
@@ -505,13 +499,12 @@ def select_trend_method(
 # Unified interface function
 def estimate_trend(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
-    method: str = 'auto',
-    **kwargs
+    column_value: str = "value",
+    time_column: str | None = None,
+    method: str = "auto",
+    **kwargs,
 ) -> pd.DataFrame:
-    """
-    Unified interface for trend estimation with automatic method selection.
+    """Unified interface for trend estimation with automatic method selection.
 
     Parameters
     ----------
@@ -526,25 +519,27 @@ def estimate_trend(
     **kwargs
         Method-specific parameters
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         Results with trend estimates and derivatives
     """
-    if method == 'auto':
+    if method == "auto":
         method = select_trend_method(df, column_value, time_column)
 
-    if method == 'loess':
+    if method == "loess":
         return loess_trend(df, column_value, time_column, **kwargs)
-    elif method == 'l1_filter':
+    elif method == "l1_filter":
         return l1_trend_filter(df, column_value, time_column, **kwargs)
-    elif method == 'local_poly':
+    elif method == "local_poly":
         return local_polynomial_trend(df, column_value, time_column, **kwargs)
-    elif method == 'spline':
+    elif method == "spline":
         from .trend import spline_trend
+
         return spline_trend(df, column_value, time_column, **kwargs)
-    elif method == 'sgolay':
+    elif method == "sgolay":
         from .trend import sgolay_trend
+
         return sgolay_trend(df, column_value, time_column, **kwargs)
     else:
         raise ValueError(f"Unknown method: {method}")

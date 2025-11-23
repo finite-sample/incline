@@ -1,20 +1,22 @@
-"""
-Seasonal decomposition and detrending for trend estimation.
+"""Seasonal decomposition and detrending for trend estimation.
 
 This module provides tools for separating seasonal components from time series
 before trend estimation, which is crucial for obtaining meaningful derivatives
 in data with strong seasonal patterns.
 """
 
+import warnings
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from typing import Optional, Union, Tuple, Literal, Dict, Any
-import warnings
+
 
 # Check for optional dependencies
 try:
-    from statsmodels.tsa.seasonal import STL, seasonal_decompose
+    from statsmodels.tsa.seasonal import STL
     from statsmodels.tsa.stattools import acf
+
     HAS_STATSMODELS = True
 except ImportError:
     HAS_STATSMODELS = False
@@ -22,21 +24,19 @@ except ImportError:
 try:
     from scipy import signal
     from scipy.fft import fft, fftfreq
+
     HAS_SCIPY_SIGNAL = True
 except ImportError:
     HAS_SCIPY_SIGNAL = False
 
-from .trend import compute_time_deltas
-
 
 def detect_seasonality(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
-    max_period: Optional[int] = None
-) -> Dict[str, Any]:
-    """
-    Detect seasonal patterns in time series data.
+    column_value: str = "value",
+    time_column: str | None = None,
+    max_period: int | None = None,
+) -> dict[str, Any]:
+    """Detect seasonal patterns in time series data.
 
     Parameters
     ----------
@@ -49,7 +49,7 @@ def detect_seasonality(
     max_period : int, optional
         Maximum period to search for seasonality
 
-    Returns
+    Returns:
     -------
     dict
         Dictionary with seasonality information:
@@ -73,23 +73,27 @@ def detect_seasonality(
             # Find peaks in autocorrelation (excluding lag 0)
             peaks = []
             for lag in range(2, len(autocorr)):
-                if (lag < len(autocorr) - 1 and
-                    autocorr[lag] > autocorr[lag-1] and
-                    autocorr[lag] > autocorr[lag+1] and
-                        autocorr[lag] > 0.3):  # Threshold for significance
+                if (
+                    lag < len(autocorr) - 1
+                    and autocorr[lag] > autocorr[lag - 1]
+                    and autocorr[lag] > autocorr[lag + 1]
+                    and autocorr[lag] > 0.3
+                ):  # Threshold for significance
                     peaks.append((lag, autocorr[lag]))
 
             if peaks:
                 # Take the strongest peak
                 best_period, strength = max(peaks, key=lambda x: x[1])
                 return {
-                    'seasonal': True,
-                    'period': best_period,
-                    'strength': strength,
-                    'method': 'autocorrelation'
+                    "seasonal": True,
+                    "period": best_period,
+                    "strength": strength,
+                    "method": "autocorrelation",
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            warnings.warn(
+                f"Autocorrelation seasonality detection failed: {e}", stacklevel=2
+            )
 
     # Method 2: FFT-based spectral analysis
     if HAS_SCIPY_SIGNAL and n > 20:
@@ -102,7 +106,7 @@ def detect_seasonality(
             freqs = fftfreq(n)
 
             # Find dominant frequency (excluding DC component)
-            power = np.abs(fft_vals[1:n//2])
+            power = np.abs(fft_vals[1 : n // 2])
             max_freq_idx = np.argmax(power) + 1
 
             if freqs[max_freq_idx] > 0:
@@ -115,13 +119,13 @@ def detect_seasonality(
 
                     if strength > 0.1:  # Threshold for significance
                         return {
-                            'seasonal': True,
-                            'period': period,
-                            'strength': strength,
-                            'method': 'fft'
+                            "seasonal": True,
+                            "period": period,
+                            "strength": strength,
+                            "method": "fft",
                         }
-        except Exception:
-            pass
+        except Exception as e:
+            warnings.warn(f"FFT seasonality detection failed: {e}", stacklevel=2)
 
     # Method 3: Simple variance-based detection
     # Check if grouping by potential periods reduces variance
@@ -133,44 +137,43 @@ def detect_seasonality(
         try:
             # Group by period and compute within-group variance
             groups = [y[i::period] for i in range(period)]
-            within_var = np.mean([np.var(group) if len(group) > 1 else original_var
-                                 for group in groups])
+            within_var = np.mean(
+                [np.var(group) if len(group) > 1 else original_var for group in groups]
+            )
             variance_reduction = 1 - within_var / original_var
 
             if variance_reduction > best_reduction:
                 best_reduction = variance_reduction
                 best_period = period
-        except Exception:
+        except Exception as e:
+            warnings.warn(
+                f"Variance-based seasonality check failed for period {period}: {e}",
+                stacklevel=2,
+            )
             continue
 
     if best_reduction > 0.3:  # Threshold for significance
         return {
-            'seasonal': True,
-            'period': best_period,
-            'strength': best_reduction,
-            'method': 'variance'
+            "seasonal": True,
+            "period": best_period,
+            "strength": best_reduction,
+            "method": "variance",
         }
 
     # No significant seasonality detected
-    return {
-        'seasonal': False,
-        'period': None,
-        'strength': 0.0,
-        'method': 'none'
-    }
+    return {"seasonal": False, "period": None, "strength": 0.0, "method": "none"}
 
 
 def stl_decompose(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
-    period: Optional[int] = None,
+    column_value: str = "value",
+    time_column: str | None = None,
+    period: int | None = None,
     seasonal: int = 7,
-    trend: Optional[int] = None,
-    robust: bool = True
+    trend: int | None = None,
+    robust: bool = True,
 ) -> pd.DataFrame:
-    """
-    Perform STL (Seasonal and Trend decomposition using Loess) decomposition.
+    """Perform STL (Seasonal and Trend decomposition using Loess) decomposition.
 
     STL is a versatile and robust method for decomposing time series into
     seasonal, trend, and remainder components.
@@ -192,7 +195,7 @@ def stl_decompose(
     robust : bool
         Use robust fitting
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         Original data plus trend, seasonal, and residual components
@@ -209,16 +212,19 @@ def stl_decompose(
     # Auto-detect period if not provided
     if period is None:
         seasonality_info = detect_seasonality(df, column_value, time_column)
-        if seasonality_info['seasonal']:
-            period = seasonality_info['period']
+        if seasonality_info["seasonal"]:
+            period = seasonality_info["period"]
         else:
             # Assume no strong seasonality, use a default
             period = min(12, n // 4)  # Monthly for shorter series
 
     if period < 2 or period >= n // 2:
-        warnings.warn(f"Invalid period {period}, using simple trend estimation")
+        warnings.warn(
+            f"Invalid period {period}, using simple trend estimation", stacklevel=2
+        )
         # Fall back to simple trend estimation
         from .trend import spline_trend
+
         return spline_trend(df, column_value, time_column)
 
     # Ensure seasonal smoother is appropriate
@@ -240,41 +246,36 @@ def stl_decompose(
             ts = pd.Series(y)
 
         # Perform STL decomposition
-        stl = STL(
-            ts,
-            seasonal=seasonal,
-            trend=trend,
-            period=period,
-            robust=robust
-        )
+        stl = STL(ts, seasonal=seasonal, trend=trend, period=period, robust=robust)
         decomposition = stl.fit()
 
         # Create output dataframe
         odf = df.copy()
-        odf['trend_component'] = decomposition.trend.values
-        odf['seasonal_component'] = decomposition.seasonal.values
-        odf['residual_component'] = decomposition.resid.values
-        odf['deseasonalized'] = decomposition.trend.values + decomposition.resid.values
+        odf["trend_component"] = decomposition.trend.values
+        odf["seasonal_component"] = decomposition.seasonal.values
+        odf["residual_component"] = decomposition.resid.values
+        odf["deseasonalized"] = decomposition.trend.values + decomposition.resid.values
 
         # Add decomposition metadata
-        odf['period'] = period
-        odf['decomposition_method'] = 'stl'
+        odf["period"] = period
+        odf["decomposition_method"] = "stl"
 
         return odf
 
     except Exception as e:
-        warnings.warn(f"STL decomposition failed: {e}, using fallback method")
+        warnings.warn(
+            f"STL decomposition failed: {e}, using fallback method", stacklevel=2
+        )
         return simple_deseasonalize(df, column_value, time_column, period)
 
 
 def simple_deseasonalize(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
-    period: Optional[int] = None
+    column_value: str = "value",
+    time_column: str | None = None,
+    period: int | None = None,
 ) -> pd.DataFrame:
-    """
-    Simple seasonal adjustment using moving averages.
+    """Simple seasonal adjustment using moving averages.
 
     This is a fallback method when statsmodels is not available or
     STL decomposition fails.
@@ -290,7 +291,7 @@ def simple_deseasonalize(
     period : int, optional
         Seasonal period (auto-detected if None)
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         Original data plus deseasonalized components
@@ -301,20 +302,20 @@ def simple_deseasonalize(
     # Auto-detect period if not provided
     if period is None:
         seasonality_info = detect_seasonality(df, column_value, time_column)
-        if seasonality_info['seasonal']:
-            period = seasonality_info['period']
+        if seasonality_info["seasonal"]:
+            period = seasonality_info["period"]
         else:
             period = min(12, n // 4)
 
     if period < 2 or period >= n // 2:
         # No meaningful seasonality
         odf = df.copy()
-        odf['trend_component'] = y
-        odf['seasonal_component'] = np.zeros(n)
-        odf['residual_component'] = np.zeros(n)
-        odf['deseasonalized'] = y
-        odf['period'] = period
-        odf['decomposition_method'] = 'none'
+        odf["trend_component"] = y
+        odf["seasonal_component"] = np.zeros(n)
+        odf["residual_component"] = np.zeros(n)
+        odf["deseasonalized"] = y
+        odf["period"] = period
+        odf["decomposition_method"] = "none"
         return odf
 
     # Estimate trend using centered moving average
@@ -328,7 +329,7 @@ def simple_deseasonalize(
             # Weighted moving average for even periods
             start_idx = i - half_window
             end_idx = i + half_window
-            data_slice = y[start_idx:end_idx+1]
+            data_slice = y[start_idx : end_idx + 1]
             weights = np.ones(len(data_slice))
             weights[0] = weights[-1] = 0.5
             trend[i] = np.average(data_slice, weights=weights)
@@ -337,8 +338,8 @@ def simple_deseasonalize(
         trend = pd.Series(y).rolling(window=window, center=True).mean().values
 
     # Fill in missing trend values at edges
-    trend[:period//2] = trend[period//2]
-    trend[-(period//2):] = trend[-(period//2)]
+    trend[: period // 2] = trend[period // 2]
+    trend[-(period // 2) :] = trend[-(period // 2)]
 
     # Estimate seasonal component
     detrended = y - trend
@@ -364,27 +365,26 @@ def simple_deseasonalize(
 
     # Create output dataframe
     odf = df.copy()
-    odf['trend_component'] = trend
-    odf['seasonal_component'] = seasonal
-    odf['residual_component'] = residual
-    odf['deseasonalized'] = deseasonalized
-    odf['period'] = period
-    odf['decomposition_method'] = 'simple'
+    odf["trend_component"] = trend
+    odf["seasonal_component"] = seasonal
+    odf["residual_component"] = residual
+    odf["deseasonalized"] = deseasonalized
+    odf["period"] = period
+    odf["decomposition_method"] = "simple"
 
     return odf
 
 
 def trend_with_deseasonalization(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
-    trend_method: str = 'spline',
-    decomposition_method: str = 'auto',
-    period: Optional[int] = None,
-    **trend_kwargs
+    column_value: str = "value",
+    time_column: str | None = None,
+    trend_method: str = "spline",
+    decomposition_method: str = "auto",
+    period: int | None = None,
+    **trend_kwargs,
 ) -> pd.DataFrame:
-    """
-    Estimate trends after seasonal decomposition.
+    """Estimate trends after seasonal decomposition.
 
     This function first removes seasonal components, then estimates trends
     on the deseasonalized data. This produces more reliable trend estimates
@@ -407,7 +407,7 @@ def trend_with_deseasonalization(
     **trend_kwargs
         Additional arguments for trend estimation
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         Results with seasonal decomposition and trend estimates
@@ -415,97 +415,116 @@ def trend_with_deseasonalization(
     # First, check if seasonality exists
     seasonality_info = detect_seasonality(df, column_value, time_column)
 
-    if not seasonality_info['seasonal'] and decomposition_method == 'auto':
+    if not seasonality_info["seasonal"] and decomposition_method == "auto":
         # No seasonality detected, proceed with direct trend estimation
-        from .trend import spline_trend, sgolay_trend
-        from .advanced import loess_trend, estimate_trend
+        from .advanced import estimate_trend, loess_trend
+        from .trend import sgolay_trend, spline_trend
 
-        if trend_method == 'spline':
+        if trend_method == "spline":
             trend_result = spline_trend(df, column_value, time_column, **trend_kwargs)
-        elif trend_method == 'sgolay':
+        elif trend_method == "sgolay":
             trend_result = sgolay_trend(df, column_value, time_column, **trend_kwargs)
-        elif trend_method == 'loess':
+        elif trend_method == "loess":
             trend_result = loess_trend(df, column_value, time_column, **trend_kwargs)
         else:
-            trend_result = estimate_trend(df, column_value, time_column, trend_method, **trend_kwargs)
-        
+            trend_result = estimate_trend(
+                df, column_value, time_column, trend_method, **trend_kwargs
+            )
+
         # Add seasonality information
-        trend_result['seasonality_detected'] = seasonality_info['seasonal']
-        trend_result['seasonality_strength'] = seasonality_info['strength']
+        trend_result["seasonality_detected"] = seasonality_info["seasonal"]
+        trend_result["seasonality_strength"] = seasonality_info["strength"]
         return trend_result
 
     # Perform seasonal decomposition
-    if decomposition_method == 'auto':
+    if decomposition_method == "auto":
         if HAS_STATSMODELS:
             decomp_result = stl_decompose(df, column_value, time_column, period)
         else:
             decomp_result = simple_deseasonalize(df, column_value, time_column, period)
-    elif decomposition_method == 'stl':
+    elif decomposition_method == "stl":
         decomp_result = stl_decompose(df, column_value, time_column, period)
-    elif decomposition_method == 'simple':
+    elif decomposition_method == "simple":
         decomp_result = simple_deseasonalize(df, column_value, time_column, period)
     else:
         raise ValueError(f"Unknown decomposition method: {decomposition_method}")
 
     # Estimate trend on deseasonalized data
     deseasonalized_df = df.copy()
-    deseasonalized_df[column_value] = decomp_result['deseasonalized']
+    deseasonalized_df[column_value] = decomp_result["deseasonalized"]
 
-    from .trend import spline_trend, sgolay_trend
+    from .trend import sgolay_trend, spline_trend
 
-    if trend_method == 'spline':
+    if trend_method == "spline":
         trend_result = spline_trend(
-            deseasonalized_df, column_value, time_column, **trend_kwargs)
-    elif trend_method == 'sgolay':
+            deseasonalized_df, column_value, time_column, **trend_kwargs
+        )
+    elif trend_method == "sgolay":
         trend_result = sgolay_trend(
-            deseasonalized_df, column_value, time_column, **trend_kwargs)
-    elif trend_method == 'loess':
+            deseasonalized_df, column_value, time_column, **trend_kwargs
+        )
+    elif trend_method == "loess":
         try:
             from .advanced import loess_trend
+
             trend_result = loess_trend(
-                deseasonalized_df, column_value, time_column, **trend_kwargs)
+                deseasonalized_df, column_value, time_column, **trend_kwargs
+            )
         except ImportError:
-            warnings.warn("LOESS not available, using spline instead")
+            warnings.warn("LOESS not available, using spline instead", stacklevel=2)
             trend_result = spline_trend(
-                deseasonalized_df, column_value, time_column, **trend_kwargs)
+                deseasonalized_df, column_value, time_column, **trend_kwargs
+            )
     else:
         try:
             from .advanced import estimate_trend
+
             trend_result = estimate_trend(
-                deseasonalized_df, column_value, time_column, trend_method, **trend_kwargs)
+                deseasonalized_df,
+                column_value,
+                time_column,
+                trend_method,
+                **trend_kwargs,
+            )
         except ImportError:
-            warnings.warn(f"Method {trend_method} not available, using spline instead")
+            warnings.warn(
+                f"Method {trend_method} not available, using spline instead",
+                stacklevel=2,
+            )
             trend_result = spline_trend(
-                deseasonalized_df, column_value, time_column, **trend_kwargs)
+                deseasonalized_df, column_value, time_column, **trend_kwargs
+            )
 
     # Combine decomposition and trend results
     final_result = decomp_result.copy()
 
     # Add trend estimation results
-    for col in ['smoothed_value', 'derivative_value', 'derivative_method',
-                'function_order', 'derivative_order']:
+    for col in [
+        "smoothed_value",
+        "derivative_value",
+        "derivative_method",
+        "function_order",
+        "derivative_order",
+    ]:
         if col in trend_result.columns:
-            final_result[f'trend_{col}'] = trend_result[col]
+            final_result[f"trend_{col}"] = trend_result[col]
 
     # Copy other trend-specific columns
     for col in trend_result.columns:
         if col not in final_result.columns and col != column_value:
             final_result[col] = trend_result[col]
 
-    final_result['seasonality_detected'] = seasonality_info['seasonal']
-    final_result['seasonality_strength'] = seasonality_info['strength']
+    final_result["seasonality_detected"] = seasonality_info["seasonal"]
+    final_result["seasonality_strength"] = seasonality_info["strength"]
 
     return final_result
 
 
 # Convenience function for pipeline integration
 def deseasonalize_pipeline(
-    decomposition_method: str = 'auto',
-    period: Optional[int] = None,
-    **decomp_kwargs
+    decomposition_method: str = "auto", period: int | None = None, **decomp_kwargs
 ):
-    """
-    Create a deseasonalization pipeline for use with pandas pipe.
+    """Create a deseasonalization pipeline for use with pandas pipe.
 
     Parameters
     ----------
@@ -516,25 +535,28 @@ def deseasonalize_pipeline(
     **decomp_kwargs
         Additional decomposition arguments
 
-    Returns
+    Returns:
     -------
     callable
         Function that can be used with pandas.DataFrame.pipe()
 
-    Examples
+    Examples:
     --------
     >>> result = df.pipe(deseasonalize_pipeline('stl')).pipe(estimate_trend, 'spline')
     """
-    def _deseasonalize(df, column_value='value', time_column=None):
-        if decomposition_method == 'stl':
+
+    def _deseasonalize(df, column_value="value", time_column=None):
+        if decomposition_method == "stl":
             return stl_decompose(df, column_value, time_column, period, **decomp_kwargs)
-        elif decomposition_method == 'simple':
+        elif decomposition_method == "simple":
             return simple_deseasonalize(df, column_value, time_column, period)
         else:
             # Auto-select
             seasonality_info = detect_seasonality(df, column_value, time_column)
-            if seasonality_info['seasonal'] and HAS_STATSMODELS:
-                return stl_decompose(df, column_value, time_column, period, **decomp_kwargs)
+            if seasonality_info["seasonal"] and HAS_STATSMODELS:
+                return stl_decompose(
+                    df, column_value, time_column, period, **decomp_kwargs
+                )
             else:
                 return simple_deseasonalize(df, column_value, time_column, period)
 

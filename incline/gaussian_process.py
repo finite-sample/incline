@@ -1,21 +1,27 @@
-"""
-Gaussian Process trend estimation for derivative computation.
+"""Gaussian Process trend estimation for derivative computation.
 
 This module provides principled Bayesian trend estimation with uncertainty
 quantification using Gaussian Processes. Derivatives are computed through
-the derivative of the kernel function, providing both estimates and 
+the derivative of the kernel function, providing both estimates and
 confidence intervals.
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
-from typing import Optional, Union, Tuple, Literal
-import warnings
+
 
 # Check for optional dependencies
 try:
     from sklearn.gaussian_process import GaussianProcessRegressor
-    from sklearn.gaussian_process.kernels import RBF, Matern, WhiteKernel, ConstantKernel
+    from sklearn.gaussian_process.kernels import (
+        RBF,
+        ConstantKernel,
+        Matern,
+        WhiteKernel,
+    )
+
     HAS_SKLEARN = True
 except ImportError:
     HAS_SKLEARN = False
@@ -24,27 +30,29 @@ from .trend import compute_time_deltas
 
 
 class GPTrend:
-    """
-    Gaussian Process trend estimator with derivative computation.
+    """Gaussian Process trend estimator with derivative computation.
 
     This class provides a principled Bayesian approach to trend estimation
     using Gaussian Processes. Derivatives are computed analytically through
     the derivative of the kernel function.
     """
 
-    def __init__(self,
-                 kernel_type: str = 'rbf',
-                 length_scale: Optional[float] = None,
-                 noise_level: Optional[float] = None,
-                 n_restarts_optimizer: int = 10):
-        """
+    def __init__(
+        self,
+        kernel_type: str = "rbf",
+        length_scale: float | None = None,
+        noise_level: float | None = None,
+        n_restarts_optimizer: int = 10,
+    ):
+        """Initialize GPTrend.
+
         Parameters
         ----------
         kernel_type : str
             Type of kernel ('rbf', 'matern32', 'matern52', 'periodic')
         length_scale : float, optional
             Characteristic length scale (auto-optimized if None)
-        noise_level : float, optional  
+        noise_level : float, optional
             Noise level (auto-optimized if None)
         n_restarts_optimizer : int
             Number of optimizer restarts for hyperparameter optimization
@@ -77,11 +85,11 @@ class GPTrend:
         else:
             noise_level = 0.1
 
-        if self.kernel_type == 'rbf':
+        if self.kernel_type == "rbf":
             kernel = ConstantKernel(1.0) * RBF(length_scale=length_scale)
-        elif self.kernel_type == 'matern32':
+        elif self.kernel_type == "matern32":
             kernel = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=1.5)
-        elif self.kernel_type == 'matern52':
+        elif self.kernel_type == "matern52":
             kernel = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=2.5)
         else:
             raise ValueError(f"Unknown kernel type: {self.kernel_type}")
@@ -92,8 +100,7 @@ class GPTrend:
         return kernel
 
     def fit(self, x: np.ndarray, y: np.ndarray):
-        """
-        Fit Gaussian Process to data.
+        """Fit Gaussian Process to data.
 
         Parameters
         ----------
@@ -102,7 +109,7 @@ class GPTrend:
         y : np.ndarray
             Observed values
 
-        Returns
+        Returns:
         -------
         self : GPTrend
             Fitted GP model
@@ -127,7 +134,7 @@ class GPTrend:
             kernel=kernel,
             alpha=1e-6,  # Small numerical stability term
             n_restarts_optimizer=self.n_restarts_optimizer,
-            normalize_y=True
+            normalize_y=True,
         )
 
         self.gp.fit(x, y)
@@ -137,8 +144,7 @@ class GPTrend:
         return self
 
     def predict(self, x: np.ndarray, return_std: bool = True):
-        """
-        Predict function values at new locations.
+        """Predict function values at new locations.
 
         Parameters
         ----------
@@ -147,7 +153,7 @@ class GPTrend:
         return_std : bool
             Whether to return prediction uncertainties
 
-        Returns
+        Returns:
         -------
         y_mean : np.ndarray
             Predicted mean values
@@ -161,8 +167,7 @@ class GPTrend:
         return self.gp.predict(x, return_std=return_std)
 
     def predict_derivatives(self, x: np.ndarray, confidence_level: float = 0.95):
-        """
-        Predict derivatives and confidence intervals.
+        """Predict derivatives and confidence intervals.
 
         Parameters
         ----------
@@ -171,7 +176,7 @@ class GPTrend:
         confidence_level : float
             Confidence level for intervals
 
-        Returns
+        Returns:
         -------
         dy_mean : np.ndarray
             Predicted derivative means
@@ -201,11 +206,12 @@ class GPTrend:
 
         # Approximate derivative uncertainty
         # This is a rough approximation - exact calculation would need kernel derivatives
-        dy_var = (std_plus**2 + std_minus**2) / (2 * dx)**2
+        dy_var = (std_plus**2 + std_minus**2) / (2 * dx) ** 2
         dy_std = np.sqrt(dy_var)
 
         # Confidence intervals
         from scipy.stats import norm
+
         alpha = 1 - confidence_level
         z_score = norm.ppf(1 - alpha / 2)
 
@@ -223,15 +229,14 @@ class GPTrend:
 
 def gp_trend(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
-    kernel_type: str = 'rbf',
-    length_scale: Optional[float] = None,
+    column_value: str = "value",
+    time_column: str | None = None,
+    kernel_type: str = "rbf",
+    length_scale: float | None = None,
     confidence_level: float = 0.95,
-    **gp_kwargs
+    **gp_kwargs,
 ) -> pd.DataFrame:
-    """
-    Estimate trend using Gaussian Process regression.
+    """Estimate trend using Gaussian Process regression.
 
     Parameters
     ----------
@@ -250,7 +255,7 @@ def gp_trend(
     **gp_kwargs
         Additional arguments for GPTrend
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         Results with GP trend estimates and derivatives
@@ -291,44 +296,44 @@ def gp_trend(
 
         # Create output dataframe
         odf = df.copy()
-        odf['smoothed_value'] = y_mean
-        odf['smoothed_value_std'] = y_std
-        odf['derivative_value'] = dy_mean
-        odf['derivative_ci_lower'] = dy_lower
-        odf['derivative_ci_upper'] = dy_upper
-        odf['derivative_method'] = 'gaussian_process'
-        odf['derivative_order'] = 1
-        odf['kernel_type'] = kernel_type
-        odf['confidence_level'] = confidence_level
+        odf["smoothed_value"] = y_mean
+        odf["smoothed_value_std"] = y_std
+        odf["derivative_value"] = dy_mean
+        odf["derivative_ci_lower"] = dy_lower
+        odf["derivative_ci_upper"] = dy_upper
+        odf["derivative_method"] = "gaussian_process"
+        odf["derivative_order"] = 1
+        odf["kernel_type"] = kernel_type
+        odf["confidence_level"] = confidence_level
 
         # Add significance test
-        odf['significant_trend'] = (dy_lower > 0) | (dy_upper < 0)
+        odf["significant_trend"] = (dy_lower > 0) | (dy_upper < 0)
 
         # Add kernel parameters
         kernel_params = gp.get_kernel_params()
         for param, value in kernel_params.items():
             if isinstance(value, (int, float)):
-                odf[f'kernel_{param}'] = value
+                odf[f"kernel_{param}"] = value
 
         return odf
 
     except Exception as e:
-        warnings.warn(f"GP trend estimation failed: {e}")
+        warnings.warn(f"GP trend estimation failed: {e}", stacklevel=2)
         # Fallback to spline method
         from .trend import spline_trend
+
         return spline_trend(df, column_value, time_column)
 
 
 def adaptive_gp_trend(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
+    column_value: str = "value",
+    time_column: str | None = None,
     window_size: int = 30,
     overlap: float = 0.5,
-    **gp_kwargs
+    **gp_kwargs,
 ) -> pd.DataFrame:
-    """
-    Adaptive Gaussian Process trend estimation with sliding windows.
+    """Adaptive Gaussian Process trend estimation with sliding windows.
 
     This method fits local GP models in overlapping windows to handle
     non-stationary time series with changing characteristics.
@@ -348,7 +353,7 @@ def adaptive_gp_trend(
     **gp_kwargs
         Arguments for GP fitting
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         Adaptive GP trend estimates
@@ -388,15 +393,25 @@ def adaptive_gp_trend(
             result_start = margin
             result_end = result_start + (store_end - store_start)
 
-            smoothed_values[store_start:store_end] = result['smoothed_value'].iloc[result_start:result_end]
-            derivatives[store_start:store_end] = result['derivative_value'].iloc[result_start:result_end]
+            smoothed_values[store_start:store_end] = result["smoothed_value"].iloc[
+                result_start:result_end
+            ]
+            derivatives[store_start:store_end] = result["derivative_value"].iloc[
+                result_start:result_end
+            ]
 
-            if 'derivative_ci_lower' in result.columns:
-                ci_lower[store_start:store_end] = result['derivative_ci_lower'].iloc[result_start:result_end]
-                ci_upper[store_start:store_end] = result['derivative_ci_upper'].iloc[result_start:result_end]
+            if "derivative_ci_lower" in result.columns:
+                ci_lower[store_start:store_end] = result["derivative_ci_lower"].iloc[
+                    result_start:result_end
+                ]
+                ci_upper[store_start:store_end] = result["derivative_ci_upper"].iloc[
+                    result_start:result_end
+                ]
 
         except Exception as e:
-            warnings.warn(f"Adaptive GP failed at window {start_idx}: {e}")
+            warnings.warn(
+                f"Adaptive GP failed at window {start_idx}: {e}", stacklevel=2
+            )
             continue
 
     # Fill any remaining NaN values with interpolation
@@ -404,25 +419,30 @@ def adaptive_gp_trend(
     if np.any(valid_mask):
         for arr in [smoothed_values, derivatives, ci_lower, ci_upper]:
             if np.any(~np.isnan(arr)):
-                arr[:] = pd.Series(arr).interpolate().fillna(
-                    method='bfill').fillna(method='ffill').values
+                arr[:] = (
+                    pd.Series(arr)
+                    .interpolate()
+                    .fillna(method="bfill")
+                    .fillna(method="ffill")
+                    .values
+                )
 
     # Create output dataframe
     odf = df.copy()
-    odf['smoothed_value'] = smoothed_values
-    odf['derivative_value'] = derivatives
-    odf['derivative_ci_lower'] = ci_lower
-    odf['derivative_ci_upper'] = ci_upper
-    odf['derivative_method'] = 'adaptive_gp'
-    odf['derivative_order'] = 1
-    odf['window_size'] = window_size
-    odf['overlap'] = overlap
+    odf["smoothed_value"] = smoothed_values
+    odf["derivative_value"] = derivatives
+    odf["derivative_ci_lower"] = ci_lower
+    odf["derivative_ci_upper"] = ci_upper
+    odf["derivative_method"] = "adaptive_gp"
+    odf["derivative_order"] = 1
+    odf["window_size"] = window_size
+    odf["overlap"] = overlap
 
     # Add significance flags
     valid_ci = ~(np.isnan(ci_lower) | np.isnan(ci_upper))
-    odf['significant_trend'] = False
-    odf.loc[valid_ci, 'significant_trend'] = (
-        (ci_lower[valid_ci] > 0) | (ci_upper[valid_ci] < 0)
+    odf["significant_trend"] = False
+    odf.loc[valid_ci, "significant_trend"] = (ci_lower[valid_ci] > 0) | (
+        ci_upper[valid_ci] < 0
     )
 
     return odf
@@ -430,12 +450,9 @@ def adaptive_gp_trend(
 
 # Convenience function for automatic kernel selection
 def select_gp_kernel(
-    df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None
+    df: pd.DataFrame, column_value: str = "value", time_column: str | None = None
 ) -> str:
-    """
-    Automatically select appropriate GP kernel based on data characteristics.
+    """Automatically select appropriate GP kernel based on data characteristics.
 
     Parameters
     ----------
@@ -446,7 +463,7 @@ def select_gp_kernel(
     time_column : str, optional
         Time column name
 
-    Returns
+    Returns:
     -------
     str
         Recommended kernel type
@@ -462,10 +479,10 @@ def select_gp_kernel(
         roughness = second_diff_var / (first_diff_var + 1e-10)
 
         if roughness > 2.0:
-            return 'matern32'  # Less smooth, more flexible
+            return "matern32"  # Less smooth, more flexible
         elif roughness > 0.5:
-            return 'matern52'  # Moderately smooth
+            return "matern52"  # Moderately smooth
         else:
-            return 'rbf'       # Very smooth
+            return "rbf"  # Very smooth
     else:
-        return 'rbf'  # Default for small datasets
+        return "rbf"  # Default for small datasets

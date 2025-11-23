@@ -1,26 +1,28 @@
-"""
-SiZer (SIgnificance of ZERo crossings) multi-scale analysis for trend estimation.
+"""SiZer (SIgnificance of ZERo crossings) multi-scale analysis for trend estimation.
 
 This module implements SiZer maps that show statistical significance of derivatives
 across multiple smoothing scales. This helps identify robust trend features and
 distinguish signal from noise at different resolutions.
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
-from typing import Optional, Union, Tuple, List, Dict, Any, Literal
-import warnings
+
 
 # Check for optional dependencies
 try:
-    import matplotlib.pyplot as plt
     import matplotlib.colors as mcolors
+    import matplotlib.pyplot as plt
+
     HAS_MATPLOTLIB = True
 except ImportError:
     HAS_MATPLOTLIB = False
 
 try:
     from scipy.stats import norm
+
     HAS_SCIPY_STATS = True
 except ImportError:
     HAS_SCIPY_STATS = False
@@ -29,21 +31,23 @@ from .trend import compute_time_deltas
 
 
 class SiZer:
-    """
-    SiZer (SIgnificance of ZERo crossings) analysis for multi-scale trend detection.
+    """SiZer (SIgnificance of ZERo crossings) analysis for multi-scale trend detection.
 
     SiZer creates maps showing where derivatives are significantly positive,
     negative, or insignificant across multiple smoothing bandwidths. This helps
     identify robust trend features that persist across scales.
     """
 
-    def __init__(self,
-                 bandwidths: Optional[np.ndarray] = None,
-                 n_bandwidths: int = 20,
-                 bandwidth_range: Tuple[float, float] = (0.01, 0.5),
-                 confidence_level: float = 0.95,
-                 method: str = 'loess'):
-        """
+    def __init__(
+        self,
+        bandwidths: np.ndarray | None = None,
+        n_bandwidths: int = 20,
+        bandwidth_range: tuple[float, float] = (0.01, 0.5),
+        confidence_level: float = 0.95,
+        method: str = "loess",
+    ):
+        """Initialize SiZer.
+
         Parameters
         ----------
         bandwidths : np.ndarray, optional
@@ -81,87 +85,92 @@ class SiZer:
 
         return np.logspace(np.log10(min_bw), np.log10(max_bw), self.n_bandwidths)
 
-    def _estimate_derivatives_at_bandwidth(self,
-                                           x: np.ndarray,
-                                           y: np.ndarray,
-                                           bandwidth: float) -> Tuple[np.ndarray, np.ndarray]:
+    def _estimate_derivatives_at_bandwidth(
+        self, x: np.ndarray, y: np.ndarray, bandwidth: float
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Estimate derivatives and standard errors at a single bandwidth."""
         n = len(x)
         derivatives = np.full(n, np.nan)
         std_errors = np.full(n, np.nan)
 
-        if self.method == 'loess':
+        if self.method == "loess":
             try:
                 from .advanced import loess_trend
-                df_temp = pd.DataFrame({'value': y})
+
+                df_temp = pd.DataFrame({"value": y})
                 if not isinstance(x[0], (int, float)):
                     df_temp.index = x
                     result = loess_trend(df_temp, frac=bandwidth)
                 else:
-                    df_temp['time'] = x
-                    result = loess_trend(df_temp, time_column='time', frac=bandwidth)
+                    df_temp["time"] = x
+                    result = loess_trend(df_temp, time_column="time", frac=bandwidth)
 
-                derivatives = result['derivative_value'].values
+                derivatives = result["derivative_value"].values
                 # Approximate standard errors from residuals
-                residuals = y - result['smoothed_value'].values
+                residuals = y - result["smoothed_value"].values
                 residual_std = np.std(residuals)
                 std_errors = np.full(n, residual_std / np.sqrt(max(1, bandwidth * n)))
 
             except ImportError:
                 # Fall back to local polynomial if LOESS not available
                 derivatives, std_errors = self._local_polynomial_derivatives(
-                    x, y, bandwidth)
+                    x, y, bandwidth
+                )
 
-        elif self.method == 'gp':
+        elif self.method == "gp":
             try:
                 from .gaussian_process import gp_trend
-                df_temp = pd.DataFrame({'value': y})
+
+                df_temp = pd.DataFrame({"value": y})
                 if not isinstance(x[0], (int, float)):
                     df_temp.index = x
                     result = gp_trend(df_temp, length_scale=bandwidth * np.ptp(x))
                 else:
-                    df_temp['time'] = x
-                    result = gp_trend(df_temp, time_column='time',
-                                      length_scale=bandwidth * np.ptp(x))
+                    df_temp["time"] = x
+                    result = gp_trend(
+                        df_temp, time_column="time", length_scale=bandwidth * np.ptp(x)
+                    )
 
-                derivatives = result['derivative_value'].values
+                derivatives = result["derivative_value"].values
                 # Use GP uncertainty
-                ci_width = result['derivative_ci_upper'] - result['derivative_ci_lower']
+                ci_width = result["derivative_ci_upper"] - result["derivative_ci_lower"]
                 std_errors = ci_width / (2 * norm.ppf(0.975))  # Convert CI to SE
 
             except ImportError:
                 derivatives, std_errors = self._local_polynomial_derivatives(
-                    x, y, bandwidth)
+                    x, y, bandwidth
+                )
 
-        elif self.method == 'spline':
+        elif self.method == "spline":
             from .trend import spline_trend
-            df_temp = pd.DataFrame({'value': y})
+
+            df_temp = pd.DataFrame({"value": y})
             # Map bandwidth to spline smoothing parameter
             s = bandwidth * n * np.var(y)
             if not isinstance(x[0], (int, float)):
                 df_temp.index = x
                 result = spline_trend(df_temp, s=s)
             else:
-                df_temp['time'] = x
-                result = spline_trend(df_temp, time_column='time', s=s)
+                df_temp["time"] = x
+                result = spline_trend(df_temp, time_column="time", s=s)
 
-            derivatives = result['derivative_value'].values
+            derivatives = result["derivative_value"].values
             # Approximate standard errors
-            residuals = y - result['smoothed_value'].values
+            residuals = y - result["smoothed_value"].values
             residual_std = np.std(residuals)
             std_errors = np.full(n, residual_std * np.sqrt(bandwidth))
 
         else:
             # Fall back to local polynomial
             derivatives, std_errors = self._local_polynomial_derivatives(
-                x, y, bandwidth)
+                x, y, bandwidth
+            )
 
         return derivatives, std_errors
 
-    def _local_polynomial_derivatives(self,
-                                      x: np.ndarray,
-                                      y: np.ndarray,
-                                      bandwidth: float) -> Tuple[np.ndarray, np.ndarray]:
+    def _local_polynomial_derivatives(
+        self, x: np.ndarray, y: np.ndarray, bandwidth: float
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Local polynomial derivative estimation (fallback method)."""
         n = len(x)
         derivatives = np.zeros(n)
@@ -174,23 +183,28 @@ class SiZer:
         for i in range(n):
             # Local neighborhood
             distances = np.abs(x - x[i])
-            weights = np.exp(-0.5 * (distances / h)**2)  # Gaussian weights
+            weights = np.exp(-0.5 * (distances / h) ** 2)  # Gaussian weights
             weights = weights / np.sum(weights)
 
             # Local linear regression
             try:
                 # Weighted local linear fit
-                X_local = np.column_stack([np.ones(n), x - x[i]])
-                W = np.diag(weights)
-                beta = np.linalg.solve(X_local.T @ W @ X_local, X_local.T @ W @ y)
+                x_local_matrix = np.column_stack([np.ones(n), x - x[i]])
+                weight_matrix = np.diag(weights)
+                beta = np.linalg.solve(
+                    x_local_matrix.T @ weight_matrix @ x_local_matrix,
+                    x_local_matrix.T @ weight_matrix @ y,
+                )
 
                 derivatives[i] = beta[1]  # Slope coefficient
 
                 # Estimate standard error
-                fitted = X_local @ beta
+                fitted = x_local_matrix @ beta
                 residuals = y - fitted
                 mse = np.sum(weights * residuals**2) / np.sum(weights)
-                var_beta = mse * np.linalg.inv(X_local.T @ W @ X_local)
+                var_beta = mse * np.linalg.inv(
+                    x_local_matrix.T @ weight_matrix @ x_local_matrix
+                )
                 std_errors[i] = np.sqrt(var_beta[1, 1])
 
             except np.linalg.LinAlgError:
@@ -199,12 +213,13 @@ class SiZer:
 
         return derivatives, std_errors
 
-    def fit(self,
-            df: pd.DataFrame,
-            column_value: str = 'value',
-            time_column: Optional[str] = None) -> 'SiZer':
-        """
-        Compute SiZer map for the given data.
+    def fit(
+        self,
+        df: pd.DataFrame,
+        column_value: str = "value",
+        time_column: str | None = None,
+    ) -> "SiZer":
+        """Compute SiZer map for the given data.
 
         Parameters
         ----------
@@ -215,7 +230,7 @@ class SiZer:
         time_column : str, optional
             Time column name (uses index if None)
 
-        Returns
+        Returns:
         -------
         self : SiZer
             Fitted SiZer object
@@ -257,7 +272,9 @@ class SiZer:
                 self.derivative_se[i, :] = ses
             except Exception as e:
                 warnings.warn(
-                    f"Failed to compute derivatives at bandwidth {bw:.3f}: {e}")
+                    f"Failed to compute derivatives at bandwidth {bw:.3f}: {e}",
+                    stacklevel=2,
+                )
                 # Fill with zeros (insignificant)
                 self.derivative_estimates[i, :] = 0
                 self.derivative_se[i, :] = 1
@@ -270,13 +287,15 @@ class SiZer:
     def _compute_significance_map(self, bandwidths: np.ndarray):
         """Compute significance classification for each (x, bandwidth) pair."""
         if not HAS_SCIPY_STATS:
-            warnings.warn("scipy.stats not available, using simple thresholding")
+            warnings.warn(
+                "scipy.stats not available, using simple thresholding", stacklevel=2
+            )
             # Simple thresholding without proper statistics
             threshold = 2.0  # Rough approximation
             t_stats = self.derivative_estimates / (self.derivative_se + 1e-10)
 
             self.significance_map = np.zeros_like(t_stats, dtype=int)
-            self.significance_map[t_stats > threshold] = 1    # Increasing
+            self.significance_map[t_stats > threshold] = 1  # Increasing
             self.significance_map[t_stats < -threshold] = -1  # Decreasing
             # Everything else remains 0 (insignificant)
         else:
@@ -294,18 +313,18 @@ class SiZer:
             self.significance_map = np.zeros_like(t_stats, dtype=int)
             # Significantly increasing
             self.significance_map[t_stats > critical_value] = 1
-            self.significance_map[t_stats < -critical_value] = - \
-                1   # Significantly decreasing
+            self.significance_map[
+                t_stats < -critical_value
+            ] = -1  # Significantly decreasing
             # Everything else remains 0 (insignificant)
 
         # Store bandwidths for plotting
         self.bandwidths = bandwidths
 
     def get_sizer_dataframe(self) -> pd.DataFrame:
-        """
-        Get SiZer results as a long-format DataFrame.
+        """Get SiZer results as a long-format DataFrame.
 
-        Returns
+        Returns:
         -------
         pd.DataFrame
             Long-format DataFrame with columns: x, bandwidth, derivative, significance
@@ -316,26 +335,29 @@ class SiZer:
         results = []
         for i, bw in enumerate(self.bandwidths):
             for j, x_val in enumerate(self.x_values):
-                results.append({
-                    'x': x_val,
-                    'bandwidth': bw,
-                    'derivative': self.derivative_estimates[i, j],
-                    'derivative_se': self.derivative_se[i, j],
-                    'significance': self.significance_map[i, j]
-                })
+                results.append(
+                    {
+                        "x": x_val,
+                        "bandwidth": bw,
+                        "derivative": self.derivative_estimates[i, j],
+                        "derivative_se": self.derivative_se[i, j],
+                        "significance": self.significance_map[i, j],
+                    }
+                )
 
         return pd.DataFrame(results)
 
-    def find_significant_features(self, min_persistence: int = 3) -> Dict[str, List[Tuple[float, float]]]:
-        """
-        Find x-regions with persistent significant trends across multiple scales.
+    def find_significant_features(
+        self, min_persistence: int = 3
+    ) -> dict[str, list[tuple[float, float]]]:
+        """Find x-regions with persistent significant trends across multiple scales.
 
         Parameters
         ----------
         min_persistence : int
             Minimum number of consecutive bandwidths showing same significance
 
-        Returns
+        Returns:
         -------
         dict
             Dictionary with 'increasing' and 'decreasing' keys, each containing
@@ -344,7 +366,7 @@ class SiZer:
         if self.significance_map is None:
             raise ValueError("Must fit SiZer before finding features")
 
-        features = {'increasing': [], 'decreasing': []}
+        features = {"increasing": [], "decreasing": []}
 
         # For each x location, check if there's persistent significance
         for j in range(len(self.x_values)):
@@ -354,7 +376,7 @@ class SiZer:
             current_sig = None
             run_length = 0
 
-            for i, sig in enumerate(sig_column):
+            for _i, sig in enumerate(sig_column):
                 if sig == current_sig and sig != 0:
                     run_length += 1
                 else:
@@ -362,9 +384,9 @@ class SiZer:
                     if run_length >= min_persistence and current_sig != 0:
                         x_val = self.x_values[j]
                         if current_sig == 1:
-                            features['increasing'].append((x_val, x_val))
+                            features["increasing"].append((x_val, x_val))
                         elif current_sig == -1:
-                            features['decreasing'].append((x_val, x_val))
+                            features["decreasing"].append((x_val, x_val))
 
                     # Start new run
                     current_sig = sig
@@ -374,9 +396,9 @@ class SiZer:
             if run_length >= min_persistence and current_sig != 0:
                 x_val = self.x_values[j]
                 if current_sig == 1:
-                    features['increasing'].append((x_val, x_val))
+                    features["increasing"].append((x_val, x_val))
                 elif current_sig == -1:
-                    features['decreasing'].append((x_val, x_val))
+                    features["decreasing"].append((x_val, x_val))
 
         # Merge adjacent x-values into regions
         for key in features:
@@ -398,12 +420,13 @@ class SiZer:
 
         return features
 
-    def plot_sizer_map(self,
-                       figsize: Tuple[float, float] = (12, 8),
-                       cmap: str = 'RdBu_r',
-                       title: Optional[str] = None) -> 'plt.Figure':
-        """
-        Plot the SiZer significance map.
+    def plot_sizer_map(
+        self,
+        figsize: tuple[float, float] = (12, 8),
+        cmap: str = "RdBu_r",
+        title: str | None = None,
+    ) -> "plt.Figure":
+        """Plot the SiZer significance map.
 
         Parameters
         ----------
@@ -414,7 +437,7 @@ class SiZer:
         title : str, optional
             Plot title
 
-        Returns
+        Returns:
         -------
         matplotlib.figure.Figure
             The figure object
@@ -428,41 +451,47 @@ class SiZer:
         fig, ax = plt.subplots(figsize=figsize)
 
         # Create custom colormap: blue (decreasing), white (insignificant), red (increasing)
-        colors = ['blue', 'white', 'red']
-        n_bins = 3
+        colors = ["blue", "white", "red"]
         cmap_custom = mcolors.ListedColormap(colors)
         bounds = [-1.5, -0.5, 0.5, 1.5]
         norm = mcolors.BoundaryNorm(bounds, cmap_custom.N)
 
         # Plot significance map
-        im = ax.imshow(self.significance_map,
-                       aspect='auto',
-                       origin='lower',
-                       cmap=cmap_custom,
-                       norm=norm,
-                       extent=[self.x_values[0], self.x_values[-1],
-                               np.log10(self.bandwidths[0]), np.log10(self.bandwidths[-1])])
+        im = ax.imshow(
+            self.significance_map,
+            aspect="auto",
+            origin="lower",
+            cmap=cmap_custom,
+            norm=norm,
+            extent=[
+                self.x_values[0],
+                self.x_values[-1],
+                np.log10(self.bandwidths[0]),
+                np.log10(self.bandwidths[-1]),
+            ],
+        )
 
         # Customize axes
-        ax.set_xlabel('x (time/location)')
-        ax.set_ylabel('log10(bandwidth)')
+        ax.set_xlabel("x (time/location)")
+        ax.set_ylabel("log10(bandwidth)")
 
         # Y-axis ticks at nice bandwidth values
         bw_ticks = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
-        bw_ticks = [bw for bw in bw_ticks if self.bandwidths[0]
-                    <= bw <= self.bandwidths[-1]]
+        bw_ticks = [
+            bw for bw in bw_ticks if self.bandwidths[0] <= bw <= self.bandwidths[-1]
+        ]
         ax.set_yticks([np.log10(bw) for bw in bw_ticks])
-        ax.set_yticklabels([f'{bw:.2f}' for bw in bw_ticks])
+        ax.set_yticklabels([f"{bw:.2f}" for bw in bw_ticks])
 
         # Add colorbar
         cbar = plt.colorbar(im, ax=ax, ticks=[-1, 0, 1])
-        cbar.set_ticklabels(['Decreasing', 'Insignificant', 'Increasing'])
-        cbar.set_label('Trend Significance')
+        cbar.set_ticklabels(["Decreasing", "Insignificant", "Increasing"])
+        cbar.set_label("Trend Significance")
 
         if title:
             ax.set_title(title)
         else:
-            ax.set_title(f'SiZer Map ({self.confidence_level:.0%} confidence)')
+            ax.set_title(f"SiZer Map ({self.confidence_level:.0%} confidence)")
 
         plt.tight_layout()
         return fig
@@ -470,15 +499,14 @@ class SiZer:
 
 def sizer_analysis(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
+    column_value: str = "value",
+    time_column: str | None = None,
     n_bandwidths: int = 15,
-    bandwidth_range: Tuple[float, float] = (0.02, 0.3),
-    method: str = 'loess',
-    confidence_level: float = 0.95
+    bandwidth_range: tuple[float, float] = (0.02, 0.3),
+    method: str = "loess",
+    confidence_level: float = 0.95,
 ) -> SiZer:
-    """
-    Perform SiZer analysis on time series data.
+    """Perform SiZer analysis on time series data.
 
     Parameters
     ----------
@@ -497,7 +525,7 @@ def sizer_analysis(
     confidence_level : float
         Confidence level for significance testing
 
-    Returns
+    Returns:
     -------
     SiZer
         Fitted SiZer object
@@ -506,7 +534,7 @@ def sizer_analysis(
         n_bandwidths=n_bandwidths,
         bandwidth_range=bandwidth_range,
         method=method,
-        confidence_level=confidence_level
+        confidence_level=confidence_level,
     )
 
     return sizer.fit(df, column_value, time_column)
@@ -514,12 +542,11 @@ def sizer_analysis(
 
 def quick_sizer_plot(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
-    **sizer_kwargs
-) -> 'plt.Figure':
-    """
-    Quick SiZer analysis and plot.
+    column_value: str = "value",
+    time_column: str | None = None,
+    **sizer_kwargs,
+) -> "plt.Figure":
+    """Quick SiZer analysis and plot.
 
     Parameters
     ----------
@@ -532,7 +559,7 @@ def quick_sizer_plot(
     **sizer_kwargs
         Additional arguments for SiZer analysis
 
-    Returns
+    Returns:
     -------
     matplotlib.figure.Figure
         The SiZer plot
@@ -544,14 +571,13 @@ def quick_sizer_plot(
 # Integration with existing trend methods
 def trend_with_sizer(
     df: pd.DataFrame,
-    column_value: str = 'value',
-    time_column: Optional[str] = None,
-    trend_method: str = 'spline',
-    sizer_method: str = 'loess',
-    **trend_kwargs
+    column_value: str = "value",
+    time_column: str | None = None,
+    trend_method: str = "spline",
+    sizer_method: str = "loess",
+    **trend_kwargs,
 ) -> pd.DataFrame:
-    """
-    Combine trend estimation with SiZer significance analysis.
+    """Combine trend estimation with SiZer significance analysis.
 
     Parameters
     ----------
@@ -568,25 +594,30 @@ def trend_with_sizer(
     **trend_kwargs
         Arguments for trend estimation
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         Results with trend estimates and SiZer significance flags
     """
     # Get primary trend estimate
-    if trend_method == 'spline':
+    if trend_method == "spline":
         from .trend import spline_trend
+
         result = spline_trend(df, column_value, time_column, **trend_kwargs)
-    elif trend_method == 'loess':
+    elif trend_method == "loess":
         from .advanced import loess_trend
+
         result = loess_trend(df, column_value, time_column, **trend_kwargs)
-    elif trend_method == 'gp':
+    elif trend_method == "gp":
         from .gaussian_process import gp_trend
+
         result = gp_trend(df, column_value, time_column, **trend_kwargs)
     else:
         from .advanced import estimate_trend
-        result = estimate_trend(df, column_value, time_column,
-                                trend_method, **trend_kwargs)
+
+        result = estimate_trend(
+            df, column_value, time_column, trend_method, **trend_kwargs
+        )
 
     # Add SiZer analysis
     try:
@@ -597,16 +628,16 @@ def trend_with_sizer(
         sizer_significance = sizer.significance_map[mid_bw_idx, :]
 
         # Add SiZer columns
-        result['sizer_significance'] = sizer_significance
-        result['sizer_increasing'] = sizer_significance == 1
-        result['sizer_decreasing'] = sizer_significance == -1
-        result['sizer_insignificant'] = sizer_significance == 0
-        result['sizer_method'] = sizer_method
+        result["sizer_significance"] = sizer_significance
+        result["sizer_increasing"] = sizer_significance == 1
+        result["sizer_decreasing"] = sizer_significance == -1
+        result["sizer_insignificant"] = sizer_significance == 0
+        result["sizer_method"] = sizer_method
 
         # Find persistent features
         features = sizer.find_significant_features()
-        result['persistent_increasing'] = False
-        result['persistent_decreasing'] = False
+        result["persistent_increasing"] = False
+        result["persistent_decreasing"] = False
 
         # Mark persistent regions
         if time_column:
@@ -616,23 +647,23 @@ def trend_with_sizer(
         else:
             x_vals = np.arange(len(df))
 
-        for start, end in features['increasing']:
+        for start, end in features["increasing"]:
             mask = (x_vals >= start) & (x_vals <= end)
-            result.loc[mask, 'persistent_increasing'] = True
+            result.loc[mask, "persistent_increasing"] = True
 
-        for start, end in features['decreasing']:
+        for start, end in features["decreasing"]:
             mask = (x_vals >= start) & (x_vals <= end)
-            result.loc[mask, 'persistent_decreasing'] = True
+            result.loc[mask, "persistent_decreasing"] = True
 
     except Exception as e:
-        warnings.warn(f"SiZer analysis failed: {e}")
+        warnings.warn(f"SiZer analysis failed: {e}", stacklevel=2)
         # Add empty SiZer columns
         n = len(result)
-        result['sizer_significance'] = np.zeros(n)
-        result['sizer_increasing'] = np.zeros(n, dtype=bool)
-        result['sizer_decreasing'] = np.zeros(n, dtype=bool)
-        result['sizer_insignificant'] = np.ones(n, dtype=bool)
-        result['persistent_increasing'] = np.zeros(n, dtype=bool)
-        result['persistent_decreasing'] = np.zeros(n, dtype=bool)
+        result["sizer_significance"] = np.zeros(n)
+        result["sizer_increasing"] = np.zeros(n, dtype=bool)
+        result["sizer_decreasing"] = np.zeros(n, dtype=bool)
+        result["sizer_insignificant"] = np.ones(n, dtype=bool)
+        result["persistent_increasing"] = np.zeros(n, dtype=bool)
+        result["persistent_decreasing"] = np.zeros(n, dtype=bool)
 
     return result

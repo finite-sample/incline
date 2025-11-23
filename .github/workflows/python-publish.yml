@@ -32,13 +32,12 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install build
+        
     - name: Install package and run tests
       run: |
         pip install -e .[test,advanced]
         # Run tests to ensure package is working
         pytest
-        # Run critical linting checks
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
     - name: Build package
       run: python -m build
     - name: Publish package to PyPI
