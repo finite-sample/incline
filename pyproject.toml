@@ -1,6 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.21.1"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.9.13,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "incline"
+module-root = "."
 
 [project]
 name = "incline"
@@ -70,14 +74,6 @@ Documentation = "https://finite-sample.github.io/incline/"
 Repository = "https://github.com/finite-sample/incline"
 Issues = "https://github.com/finite-sample/incline/issues"
 
-[tool.hatch.build.targets.wheel]
-packages = ["incline"]
-
-[tool.hatch.build]
-include = [
-  "incline/data/*.csv",
-  "incline/examples/*.ipynb"
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

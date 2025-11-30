@@ -852,6 +852,7 @@ test = [
     { name = "coverage" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -885,6 +886,7 @@ test = [
     { name = "coverage" },
     { name = "pytest", specifier = ">=7.0" },
     { name = "pytest-cov", specifier = ">=4.0" },
+    { name = "ruff", specifier = ">=0.7.0" },
 ]
 
 [[package]]
