@@ -14,8 +14,8 @@ This example shows how to analyze trends in stock price data:
     import matplotlib.pyplot as plt
     from incline import spline_trend, sgolay_trend, naive_trend
 
-    # Load stock data (assuming you have AAPL.csv)
-    df = pd.read_csv('AAPL.csv', parse_dates=['Date'], index_col='Date')
+    # Load stock data from examples/data directory
+    df = pd.read_csv('examples/data/AAPL.csv', parse_dates=['Date'], index_col='Date')
     
     # Focus on closing prices
     price_data = df[['Close']].rename(columns={'Close': 'value'})
@@ -64,7 +64,7 @@ Analyze and rank multiple stocks by their recent trends:
     
     for symbol in stocks:
         # Load and process each stock
-        df = pd.read_csv(f'{symbol}.csv', parse_dates=['Date'], index_col='Date')
+        df = pd.read_csv(f'examples/data/{symbol}.csv', parse_dates=['Date'], index_col='Date')
         price_data = df[['Close']].rename(columns={'Close': 'value'})
         
         # Calculate spline trend
@@ -135,7 +135,7 @@ Analyze acceleration (second derivative) to detect trend changes:
 .. code-block:: python
 
     # Use stock data or any time series
-    df = pd.read_csv('AAPL.csv', parse_dates=['Date'], index_col='Date')
+    df = pd.read_csv('examples/data/AAPL.csv', parse_dates=['Date'], index_col='Date')
     price_data = df[['Close']].rename(columns={'Close': 'value'})
     
     # Calculate first and second derivatives
@@ -208,4 +208,4 @@ Understand how different parameters affect your results:
     plt.tight_layout()
     plt.show()
 
-For more examples, check out the Jupyter notebook in the repository that demonstrates real stock market analysis using incline.
+For more examples, check out the Jupyter notebook in the `examples/` directory that demonstrates real stock market analysis using incline.
