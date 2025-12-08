@@ -28,7 +28,7 @@ Clarification
 Sometimes we want to know what the "trend" was over a particular time
 window. But what that means is not 100% clear. For a synopsis of the
 issues, see
-`here <http://gbytes.gsood.com/2018/06/22/talking-on-a-tangent/>`__.
+`here <http://gojiberries.io/talking-on-a-tangent/>`__.
 
 Underlying Machinery
 ~~~~~~~~~~~~~~~~~~~~
