@@ -14,7 +14,7 @@ authors = [
     {name = "Suriyan Laohaprapanon", email = "suriyant@gmail.com"},
     {name = "Gaurav Sood", email = "gsood07@gmail.com"}
 ]
-readme = "README.rst"
+readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 keywords = ["time-series", "derivative", "slope", "trend", "savitzky-golay", "spline"]
