@@ -57,6 +57,7 @@ extensions = [
     'sphinx.ext.githubpages',
     'sphinx.ext.napoleon',
     'myst_parser',
+    'jupyter_sphinx',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -68,10 +69,7 @@ templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 # The suffix(es) of source filenames.
-source_suffix = {
-    '.rst': None,
-    '.md': 'myst_parser',
-}
+source_suffix = ['.md', '.rst']
 
 # The master toctree document.
 master_doc = 'index'
@@ -80,7 +78,7 @@ master_doc = 'index'
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
-html_theme = 'sphinx_rtd_theme'
+html_theme = 'furo'
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -151,3 +149,19 @@ myst_enable_extensions = [
 
 # If true, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = True
+
+# -- Options for jupyter-sphinx extension ------------------------------------
+
+# Execute notebooks automatically during build
+jupyter_execute_notebooks = "auto"
+
+# Configure execution options
+jupyter_sphinx_execution_options = {
+    "timeout": 60,
+    "allow_errors": False,
+}
+
+# Optional: Configure thebelab for interactive mode (disabled for static builds)
+jupyter_sphinx_thebelab_config = {
+    "requestKernel": False,
+}
