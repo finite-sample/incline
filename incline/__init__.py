@@ -66,7 +66,13 @@ try:
 except ImportError:
     _has_multiscale = False
 
-__version__ = "0.2.0"
+from importlib.metadata import version
+
+try:
+    __version__ = version("incline")
+except Exception:
+    # Fallback for development/editable installs
+    __version__ = "0.4.0-dev"
 # Build __all__ dynamically based on what's available
 __all__ = [
     "bootstrap_derivative_ci",

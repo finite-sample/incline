@@ -20,6 +20,7 @@ installation
 quickstart
 api
 examples
+examples_executable/index
 limitations
 ```
 

@@ -57,6 +57,7 @@ extensions = [
     'sphinx.ext.githubpages',
     'sphinx.ext.napoleon',
     'myst_parser',
+    'jupyter_sphinx',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -148,3 +149,19 @@ myst_enable_extensions = [
 
 # If true, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = True
+
+# -- Options for jupyter-sphinx extension ------------------------------------
+
+# Execute notebooks automatically during build
+jupyter_execute_notebooks = "auto"
+
+# Configure execution options
+jupyter_sphinx_execution_options = {
+    "timeout": 60,
+    "allow_errors": False,
+}
+
+# Optional: Configure thebelab for interactive mode (disabled for static builds)
+jupyter_sphinx_thebelab_config = {
+    "requestKernel": False,
+}
