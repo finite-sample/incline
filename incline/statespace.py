@@ -5,8 +5,10 @@ quantification through state-space models and Kalman filtering.
 """
 
 import warnings
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 
@@ -45,7 +47,7 @@ class LocalLinearTrend:
         obs_variance: float | None = None,
         level_variance: float | None = None,
         slope_variance: float | None = None,
-    ):
+    ) -> None:
         """Initialize LocalLinearTrend.
 
         Parameters
@@ -66,7 +68,7 @@ class LocalLinearTrend:
         self.smoother_results = None
         self._kalman_filter = None
 
-    def _setup_kalman_filter(self, y: np.ndarray):
+    def _setup_kalman_filter(self, y: npt.NDArray[np.float64]) -> Any:
         """Set up the Kalman filter for local linear trend."""
         len(y)
 
@@ -91,7 +93,7 @@ class LocalLinearTrend:
 
         return kf
 
-    def _log_likelihood(self, params: np.ndarray, y: np.ndarray) -> float:
+    def _log_likelihood(self, params: npt.NDArray[np.float64], y: npt.NDArray[np.float64]) -> float:
         """Compute log-likelihood for parameter estimation."""
         obs_var, level_var, slope_var = np.exp(params)  # Ensure positive
 
@@ -113,7 +115,7 @@ class LocalLinearTrend:
         except np.linalg.LinAlgError:
             return np.inf
 
-    def fit(self, y: np.ndarray) -> "LocalLinearTrend":
+    def fit(self, y: npt.NDArray[np.float64]) -> "LocalLinearTrend":
         """Fit the local linear trend model to data.
 
         Parameters
@@ -217,7 +219,7 @@ class LocalLinearTrend:
 
     def get_level(
         self, confidence_level: float = 0.95
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Get estimated level (smoothed values) with confidence intervals.
 
         Parameters
@@ -258,7 +260,7 @@ class LocalLinearTrend:
 
     def get_slope(
         self, confidence_level: float = 0.95
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Get estimated slope (trend) with confidence intervals.
 
         Parameters
@@ -308,8 +310,8 @@ class StructuralTrendModel:
     """
 
     def __init__(
-        self, seasonal_periods: list | None = None, damped_trend: bool = False, **kwargs
-    ):
+        self, seasonal_periods: list[int] | None = None, damped_trend: bool = False, **kwargs: Any
+    ) -> None:
         """Initialize StructuralTrendModel.
 
         Parameters
@@ -327,7 +329,7 @@ class StructuralTrendModel:
 
         self.fitted_model = None
 
-    def fit(self, y: np.ndarray):
+    def fit(self, y: npt.NDArray[np.float64]) -> "StructuralTrendModel":
         """Fit structural model using statsmodels."""
         if not HAS_STATSMODELS:
             raise ImportError("statsmodels required for structural time series models")

@@ -6,6 +6,7 @@ regression, trend filtering, and state-space models.
 """
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 
@@ -352,7 +353,7 @@ def local_polynomial_trend(
     derivatives = np.zeros(n)
 
     # Kernel function
-    def kernel_weight(distances, kernel_type):
+    def kernel_weight(distances: npt.NDArray[np.float64], kernel_type: str) -> npt.NDArray[np.float64]:
         """Compute kernel weights for given distances."""
         u = distances / h
 

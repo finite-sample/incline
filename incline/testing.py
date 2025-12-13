@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 
@@ -48,12 +49,12 @@ class TrendFunction(ABC):
     """Abstract base class for trend functions with known derivatives."""
 
     @abstractmethod
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """Evaluate the function at points x."""
         pass
 
     @abstractmethod
-    def derivative(self, x: np.ndarray, order: int = 1) -> np.ndarray:
+    def derivative(self, x: npt.NDArray[np.float64], order: int = 1) -> npt.NDArray[np.float64]:
         """Evaluate the derivative at points x."""
         pass
 
@@ -67,7 +68,7 @@ class TrendFunction(ABC):
 class PolynomialTrend(TrendFunction):
     """Polynomial trend function."""
 
-    def __init__(self, coefficients: list[float]):
+    def __init__(self, coefficients: list[float]) -> None:
         """Initialize PolynomialTrend.
 
         Parameters
@@ -77,10 +78,10 @@ class PolynomialTrend(TrendFunction):
         """
         self.coefficients = np.array(coefficients)
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         return np.polyval(self.coefficients[::-1], x)
 
-    def derivative(self, x: np.ndarray, order: int = 1) -> np.ndarray:
+    def derivative(self, x: npt.NDArray[np.float64], order: int = 1) -> npt.NDArray[np.float64]:
         if order == 0:
             return self(x)
 
@@ -114,7 +115,7 @@ class SinusoidalTrend(TrendFunction):
 
     def __init__(
         self, amplitude: float = 1.0, frequency: float = 1.0, phase: float = 0.0
-    ):
+    ) -> None:
         """Initialize SinusoidalTrend.
 
         Parameters
@@ -130,10 +131,10 @@ class SinusoidalTrend(TrendFunction):
         self.frequency = frequency
         self.phase = phase
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         return self.amplitude * np.sin(2 * np.pi * self.frequency * x + self.phase)
 
-    def derivative(self, x: np.ndarray, order: int = 1) -> np.ndarray:
+    def derivative(self, x: npt.NDArray[np.float64], order: int = 1) -> npt.NDArray[np.float64]:
         if order == 1:
             return (
                 self.amplitude
@@ -184,7 +185,7 @@ class SinusoidalTrend(TrendFunction):
 class ExponentialTrend(TrendFunction):
     """Exponential trend function."""
 
-    def __init__(self, scale: float = 1.0, rate: float = 0.1):
+    def __init__(self, scale: float = 1.0, rate: float = 0.1) -> None:
         """Initialize ExponentialTrend.
 
         Parameters
@@ -197,10 +198,10 @@ class ExponentialTrend(TrendFunction):
         self.scale = scale
         self.rate = rate
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         return self.scale * np.exp(self.rate * x)
 
-    def derivative(self, x: np.ndarray, order: int = 1) -> np.ndarray:
+    def derivative(self, x: npt.NDArray[np.float64], order: int = 1) -> npt.NDArray[np.float64]:
         return self.scale * (self.rate**order) * np.exp(self.rate * x)
 
     @property
@@ -211,7 +212,7 @@ class ExponentialTrend(TrendFunction):
 class StepTrend(TrendFunction):
     """Piecewise constant (step) trend function."""
 
-    def __init__(self, breakpoints: list[float], values: list[float]):
+    def __init__(self, breakpoints: list[float], values: list[float]) -> None:
         """Initialize StepTrend.
 
         Parameters
@@ -224,7 +225,7 @@ class StepTrend(TrendFunction):
         self.breakpoints = np.array(breakpoints)
         self.values = np.array(values)
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         result = np.zeros_like(x)
         for i, (bp, val) in enumerate(zip(self.breakpoints, self.values, strict=False)):
             if i == 0:
@@ -239,7 +240,7 @@ class StepTrend(TrendFunction):
 
         return result
 
-    def derivative(self, x: np.ndarray, order: int = 1) -> np.ndarray:
+    def derivative(self, x: npt.NDArray[np.float64], order: int = 1) -> npt.NDArray[np.float64]:
         if order == 1:
             # Derivative is zero except at breakpoints (where it's undefined)
             return np.zeros_like(x)
@@ -257,7 +258,7 @@ class NoiseGenerator:
     @staticmethod
     def white_noise(
         n: int, std: float = 1.0, random_state: int | None = None
-    ) -> np.ndarray:
+    ) -> npt.NDArray[np.float64]:
         """Generate white noise."""
         if random_state is not None:
             np.random.seed(random_state)
@@ -266,7 +267,7 @@ class NoiseGenerator:
     @staticmethod
     def ar1_noise(
         n: int, phi: float = 0.7, std: float = 1.0, random_state: int | None = None
-    ) -> np.ndarray:
+    ) -> npt.NDArray[np.float64]:
         """Generate AR(1) noise."""
         if random_state is not None:
             np.random.seed(random_state)
@@ -286,7 +287,7 @@ class NoiseGenerator:
         period: int = 12,
         amplitude: float = 1.0,
         random_state: int | None = None,
-    ) -> np.ndarray:
+    ) -> npt.NDArray[np.float64]:
         """Generate noise with seasonal component."""
         if random_state is not None:
             np.random.seed(random_state)
@@ -307,8 +308,8 @@ def generate_time_series(
     irregular_spacing: bool = False,
     missing_data_prob: float = 0.0,
     random_state: int | None = None,
-    **noise_kwargs,
-) -> tuple[pd.DataFrame, np.ndarray]:
+    **noise_kwargs: Any,
+) -> tuple[pd.DataFrame, npt.NDArray[np.float64]]:
     """Generate synthetic time series with known trend and derivative.
 
     Parameters
@@ -405,12 +406,12 @@ def generate_time_series(
 
 def benchmark_method(
     method_name: str,
-    method_function: Callable,
+    method_function: Callable[..., pd.DataFrame],
     df: pd.DataFrame,
-    true_derivative: np.ndarray,
+    true_derivative: npt.NDArray[np.float64],
     time_column: str | None = None,
     confidence_level: float = 0.95,
-    **method_kwargs,
+    **method_kwargs: Any,
 ) -> SimulationResult:
     """Benchmark a single trend estimation method.
 
@@ -637,7 +638,7 @@ def run_comprehensive_benchmark(
     return pd.DataFrame(results)
 
 
-def plot_benchmark_results(results_df: pd.DataFrame, metric: str = "mse_derivative"):
+def plot_benchmark_results(results_df: pd.DataFrame, metric: str = "mse_derivative") -> None:
     """Plot benchmark results."""
     if not HAS_MATPLOTLIB:
         return

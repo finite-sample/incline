@@ -7,8 +7,10 @@ confidence intervals.
 """
 
 import warnings
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 
@@ -43,7 +45,7 @@ class GPTrend:
         length_scale: float | None = None,
         noise_level: float | None = None,
         n_restarts_optimizer: int = 10,
-    ):
+    ) -> None:
         """Initialize GPTrend.
 
         Parameters
@@ -72,7 +74,7 @@ class GPTrend:
         self.X_train = None
         self.y_train = None
 
-    def _create_kernel(self, x_scale: float):
+    def _create_kernel(self, x_scale: float) -> Any:
         """Create kernel based on kernel_type."""
         if self.length_scale is not None:
             length_scale = self.length_scale
@@ -99,7 +101,7 @@ class GPTrend:
 
         return kernel
 
-    def fit(self, x: np.ndarray, y: np.ndarray):
+    def fit(self, x: npt.NDArray[np.float64], y: npt.NDArray[np.float64]) -> "GPTrend":
         """Fit Gaussian Process to data.
 
         Parameters
@@ -143,7 +145,7 @@ class GPTrend:
 
         return self
 
-    def predict(self, x: np.ndarray, return_std: bool = True):
+    def predict(self, x: npt.NDArray[np.float64], return_std: bool = True) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]] | npt.NDArray[np.float64]:
         """Predict function values at new locations.
 
         Parameters
@@ -166,7 +168,7 @@ class GPTrend:
         x = np.asarray(x).reshape(-1, 1)
         return self.gp.predict(x, return_std=return_std)
 
-    def predict_derivatives(self, x: np.ndarray, confidence_level: float = 0.95):
+    def predict_derivatives(self, x: npt.NDArray[np.float64], confidence_level: float = 0.95) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Predict derivatives and confidence intervals.
 
         Parameters
@@ -220,7 +222,7 @@ class GPTrend:
 
         return dy_mean.flatten(), dy_lower.flatten(), dy_upper.flatten()
 
-    def get_kernel_params(self):
+    def get_kernel_params(self) -> dict[str, Any]:
         """Get fitted kernel hyperparameters."""
         if self.gp is None:
             raise ValueError("Must fit GP before accessing parameters")

@@ -56,7 +56,6 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.7.0",
-    "mypy>=1.0",
     "pre-commit>=3.0",
     "jupyter",
     "matplotlib"
@@ -185,9 +184,8 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
 
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-check_untyped_defs = true
-ignore_missing_imports = true
+[tool.deptry]
+# Treat the "docs" optional dependency group as dev dependencies
+pep621_dev_dependency_groups = ["docs"]
+# Extend default excludes to include docs directory
+extend_exclude = ["docs"]

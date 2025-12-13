@@ -6,8 +6,10 @@ distinguish signal from noise at different resolutions.
 """
 
 import warnings
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 
@@ -40,12 +42,12 @@ class SiZer:
 
     def __init__(
         self,
-        bandwidths: np.ndarray | None = None,
+        bandwidths: npt.NDArray[np.float64] | None = None,
         n_bandwidths: int = 20,
         bandwidth_range: tuple[float, float] = (0.01, 0.5),
         confidence_level: float = 0.95,
         method: str = "loess",
-    ):
+    ) -> None:
         """Initialize SiZer.
 
         Parameters
@@ -73,7 +75,7 @@ class SiZer:
         self.derivative_estimates = None
         self.derivative_se = None
 
-    def _generate_bandwidths(self, n_points: int) -> np.ndarray:
+    def _generate_bandwidths(self, n_points: int) -> npt.NDArray[np.float64]:
         """Generate logarithmically spaced bandwidths."""
         if self.bandwidths is not None:
             return self.bandwidths
@@ -86,8 +88,8 @@ class SiZer:
         return np.logspace(np.log10(min_bw), np.log10(max_bw), self.n_bandwidths)
 
     def _estimate_derivatives_at_bandwidth(
-        self, x: np.ndarray, y: np.ndarray, bandwidth: float
-    ) -> tuple[np.ndarray, np.ndarray]:
+        self, x: npt.NDArray[np.float64], y: npt.NDArray[np.float64], bandwidth: float
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Estimate derivatives and standard errors at a single bandwidth."""
         n = len(x)
         derivatives = np.full(n, np.nan)
@@ -169,8 +171,8 @@ class SiZer:
         return derivatives, std_errors
 
     def _local_polynomial_derivatives(
-        self, x: np.ndarray, y: np.ndarray, bandwidth: float
-    ) -> tuple[np.ndarray, np.ndarray]:
+        self, x: npt.NDArray[np.float64], y: npt.NDArray[np.float64], bandwidth: float
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Local polynomial derivative estimation (fallback method)."""
         n = len(x)
         derivatives = np.zeros(n)
@@ -284,7 +286,7 @@ class SiZer:
 
         return self
 
-    def _compute_significance_map(self, bandwidths: np.ndarray):
+    def _compute_significance_map(self, bandwidths: npt.NDArray[np.float64]) -> None:
         """Compute significance classification for each (x, bandwidth) pair."""
         if not HAS_SCIPY_STATS:
             warnings.warn(

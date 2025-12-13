@@ -130,7 +130,7 @@ def detect_seasonality(
     # Method 3: Simple variance-based detection
     # Check if grouping by potential periods reduces variance
     best_reduction = 0
-    best_period = None
+    best_period_var: int | None = None
     original_var = np.var(y)
 
     for period in range(2, min(max_period + 1, n // 3)):
@@ -144,7 +144,7 @@ def detect_seasonality(
 
             if variance_reduction > best_reduction:
                 best_reduction = variance_reduction
-                best_period = period
+                best_period_var = period
         except Exception as e:
             warnings.warn(
                 f"Variance-based seasonality check failed for period {period}: {e}",
@@ -155,7 +155,7 @@ def detect_seasonality(
     if best_reduction > 0.3:  # Threshold for significance
         return {
             "seasonal": True,
-            "period": best_period,
+            "period": best_period_var,
             "strength": best_reduction,
             "method": "variance",
         }
@@ -522,8 +522,8 @@ def trend_with_deseasonalization(
 
 # Convenience function for pipeline integration
 def deseasonalize_pipeline(
-    decomposition_method: str = "auto", period: int | None = None, **decomp_kwargs
-):
+    decomposition_method: str = "auto", period: int | None = None, **decomp_kwargs: Any
+) -> Any:
     """Create a deseasonalization pipeline for use with pandas pipe.
 
     Parameters
@@ -545,7 +545,7 @@ def deseasonalize_pipeline(
     >>> result = df.pipe(deseasonalize_pipeline('stl')).pipe(estimate_trend, 'spline')
     """
 
-    def _deseasonalize(df, column_value="value", time_column=None):
+    def _deseasonalize(df: pd.DataFrame, column_value: str = "value", time_column: str | None = None) -> pd.DataFrame:
         if decomposition_method == "stl":
             return stl_decompose(df, column_value, time_column, period, **decomp_kwargs)
         elif decomposition_method == "simple":

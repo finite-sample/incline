@@ -1,13 +1,14 @@
 import warnings
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from scipy.interpolate import UnivariateSpline
 from scipy.signal import savgol_filter
 
 
-def compute_time_deltas(time_index: pd.Index) -> tuple[np.ndarray, float]:
+def compute_time_deltas(time_index: pd.Index) -> tuple[npt.NDArray[np.float64], float]:
     """Compute time deltas from a pandas time index.
 
     Returns:
@@ -22,7 +23,7 @@ def compute_time_deltas(time_index: pd.Index) -> tuple[np.ndarray, float]:
 
     if len(x) > 1:
         deltas = np.diff(x)
-        delta = np.median(deltas)
+        delta = float(np.median(deltas))
 
         # Check for irregular sampling (only warn if truly irregular)
         cv_deltas = np.std(deltas) / np.mean(deltas) if np.mean(deltas) > 0 else 0
@@ -38,7 +39,11 @@ def compute_time_deltas(time_index: pd.Index) -> tuple[np.ndarray, float]:
     return x, delta
 
 
-def naive_trend(df, column_value="value", time_column=None):
+def naive_trend(
+    df: pd.DataFrame,
+    column_value: str = "value",
+    time_column: str | None = None
+) -> pd.DataFrame:
     """naive_trend.
 
     Gives the naive slope: look to the right, look to the left,
@@ -55,7 +60,7 @@ def naive_trend(df, column_value="value", time_column=None):
     # Handle time scaling
     if time_column:
         x = df[time_column].values
-        delta = np.median(np.diff(x))
+        delta = float(np.median(np.diff(x)))
     elif isinstance(df.index, pd.DatetimeIndex):
         x, delta = compute_time_deltas(df.index)
     else:
@@ -87,14 +92,14 @@ def naive_trend(df, column_value="value", time_column=None):
 
 
 def spline_trend(
-    df,
-    column_value="value",
-    time_column=None,
-    function_order=3,
-    derivative_order=1,
-    s=None,
-    use_gcv=False,
-):
+    df: pd.DataFrame,
+    column_value: str = "value",
+    time_column: str | None = None,
+    function_order: int = 3,
+    derivative_order: int = 1,
+    s: float | None = None,
+    use_gcv: bool = False,
+) -> pd.DataFrame:
     """spline_trend.
 
     Interpolates time series with splines of 'function_order'. And then
@@ -127,6 +132,7 @@ def spline_trend(
         x = np.arange(len(df), dtype=float)
 
     # Handle smoothing parameter
+    s_used: float | str
     if use_gcv:
         try:
             from scipy.interpolate import make_smoothing_spline
@@ -146,12 +152,12 @@ def spline_trend(
         if s is None:
             # Residual-based smoothing factor estimate
             residual_var = np.var(np.diff(y))
-            s = len(y) * residual_var * 0.1  # Rule of thumb
+            s = float(len(y) * residual_var * 0.1)  # Rule of thumb
 
         spl = UnivariateSpline(x, y, k=function_order, s=s)
         smoothed = spl(x)
         deriv = spl(x, nu=derivative_order)
-        s_used = s
+        s_used = float(s) if s is not None else 0.0
 
     odf = df.copy()
     odf["smoothed_value"] = smoothed
@@ -164,14 +170,14 @@ def spline_trend(
 
 
 def sgolay_trend(
-    df,
-    column_value="value",
-    time_column=None,
-    function_order=3,
-    derivative_order=1,
-    window_length=15,
-    delta=None,
-):
+    df: pd.DataFrame,
+    column_value: str = "value",
+    time_column: str | None = None,
+    function_order: int = 3,
+    derivative_order: int = 1,
+    window_length: int = 15,
+    delta: float | None = None,
+) -> pd.DataFrame:
     """sgolay_trend.
 
     Interpolates time series with savitzky-golay using polynomials of
@@ -200,7 +206,7 @@ def sgolay_trend(
     if delta is None:
         if time_column:
             x = df[time_column].values
-            delta = np.median(np.diff(x))
+            delta = float(np.median(np.diff(x)))
         elif isinstance(df.index, pd.DatetimeIndex):
             x, delta = compute_time_deltas(df.index)
         else:
@@ -252,17 +258,17 @@ def sgolay_trend(
 
 
 def trending(
-    df_list,
-    column_id="id",
-    derivative_order=1,
-    max_or_avg="max",
-    k=5,
-    robust=False,
-    trim_fraction=0.1,
-    weighting="uniform",
-    confidence_level=0.95,
-    return_confidence=False,
-):
+    df_list: list[pd.DataFrame],
+    column_id: str = "id",
+    derivative_order: int = 1,
+    max_or_avg: str = "max",
+    k: int = 5,
+    robust: bool = False,
+    trim_fraction: float = 0.1,
+    weighting: str = "uniform",
+    confidence_level: float = 0.95,
+    return_confidence: bool = False,
+) -> pd.DataFrame:
     """Enhanced trending analysis with robust statistics.
 
     For each item in the list, calculate either the max, average, or robust
@@ -432,13 +438,13 @@ def _huber_mean(x: np.ndarray, c: float = 1.345) -> float:
     n = len(x)
 
     if n == 0:
-        return np.nan
+        return float("nan")
     if n == 1:
-        return x[0]
+        return float(x[0])
 
     # Initial estimate - use mean for better convergence properties
-    mu = np.mean(x)
-    sigma = np.median(np.abs(x - np.median(x))) / 0.6745  # MAD scale estimate
+    mu = float(np.mean(x))
+    sigma = float(np.median(np.abs(x - np.median(x))) / 0.6745)  # MAD scale estimate
 
     if sigma == 0:
         return mu
@@ -448,7 +454,7 @@ def _huber_mean(x: np.ndarray, c: float = 1.345) -> float:
         residuals = (x - mu) / sigma
         weights = np.where(np.abs(residuals) <= c, 1.0, c / (np.abs(residuals) + 1e-10))
 
-        mu_new = np.sum(weights * x) / np.sum(weights)
+        mu_new = float(np.sum(weights * x) / np.sum(weights))
 
         if abs(mu_new - mu) < 1e-8:  # Tighter convergence
             break
@@ -495,7 +501,7 @@ def _outlier_fraction(x: np.ndarray) -> float:
     upper_bound = q75 + 1.5 * iqr
 
     outliers = (x < lower_bound) | (x > upper_bound)
-    return np.mean(outliers)
+    return float(np.mean(outliers))
 
 
 def _robust_skewness(x: np.ndarray) -> float:
@@ -505,12 +511,12 @@ def _robust_skewness(x: np.ndarray) -> float:
     if q75 - q25 == 0:
         return 0.0
 
-    return (q75 + q25 - 2 * q50) / (q75 - q25)
+    return float((q75 + q25 - 2 * q50) / (q75 - q25))
 
 
 def _bootstrap_trend_ci(
-    values: np.ndarray,
-    weights: np.ndarray,
+    values: npt.NDArray[np.float64],
+    weights: npt.NDArray[np.float64],
     statistic: str,
     confidence_level: float,
     n_bootstrap: int = 100,
@@ -534,15 +540,15 @@ def _bootstrap_trend_ci(
 
         # Compute statistic
         if statistic == "max":
-            boot_stat = np.max(boot_values)
+            boot_stat = float(np.max(boot_values))
         elif statistic in ["avg", "mean"]:
-            boot_stat = np.average(boot_values, weights=boot_weights)
+            boot_stat = float(np.average(boot_values, weights=boot_weights))
         elif statistic == "median":
-            boot_stat = np.median(boot_values)
+            boot_stat = float(np.median(boot_values))
         elif statistic == "trimmed_mean" and has_trim_mean:
-            boot_stat = trim_mean(boot_values, 0.1)
+            boot_stat = float(trim_mean(boot_values, 0.1))
         else:
-            boot_stat = np.mean(boot_values)
+            boot_stat = float(np.mean(boot_values))
 
         bootstrap_stats.append(boot_stat)
 
@@ -551,8 +557,8 @@ def _bootstrap_trend_ci(
     lower_percentile = 100 * alpha / 2
     upper_percentile = 100 * (1 - alpha / 2)
 
-    ci_lower = np.percentile(bootstrap_stats, lower_percentile)
-    ci_upper = np.percentile(bootstrap_stats, upper_percentile)
+    ci_lower = float(np.percentile(bootstrap_stats, lower_percentile))
+    ci_upper = float(np.percentile(bootstrap_stats, upper_percentile))
 
     return ci_lower, ci_upper
 
@@ -601,6 +607,7 @@ def bootstrap_derivative_ci(
         block_size = int(np.sqrt(n))
 
     # Select method
+    trend_func: Any
     if method == "spline":
         trend_func = spline_trend
     elif method == "sgolay":
@@ -614,7 +621,7 @@ def bootstrap_derivative_ci(
     )
 
     # Bootstrap samples
-    bootstrap_derivatives = []
+    bootstrap_derivatives: list[npt.NDArray[np.float64]] = []
 
     for _ in range(n_bootstrap):
         # Create block bootstrap sample
@@ -647,7 +654,7 @@ def bootstrap_derivative_ci(
             continue
 
     if len(bootstrap_derivatives) > 0:
-        bootstrap_derivatives = np.array(bootstrap_derivatives)
+        bootstrap_array = np.array(bootstrap_derivatives)
 
         # Compute confidence intervals
         alpha = 1 - confidence_level
@@ -655,12 +662,12 @@ def bootstrap_derivative_ci(
         upper_percentile = (1 - alpha / 2) * 100
 
         result["derivative_ci_lower"] = np.percentile(
-            bootstrap_derivatives, lower_percentile, axis=0
+            bootstrap_array, lower_percentile, axis=0
         )
         result["derivative_ci_upper"] = np.percentile(
-            bootstrap_derivatives, upper_percentile, axis=0
+            bootstrap_array, upper_percentile, axis=0
         )
-        result["derivative_std"] = np.std(bootstrap_derivatives, axis=0)
+        result["derivative_std"] = np.std(bootstrap_array, axis=0)
 
         # Flag significant trends (CI doesn't include 0)
         result["significant_trend"] = (result["derivative_ci_lower"] > 0) | (
@@ -724,6 +731,9 @@ def select_smoothing_parameter_cv(
             # Window length range for SG (odd numbers only)
             max_window = min(51, n // 2)
             param_range = np.arange(5, max_window, 2)
+        else:
+            # Default fallback
+            param_range = np.array([1.0])
 
     # Cross-validation
     fold_size = n // cv_folds
