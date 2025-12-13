@@ -68,6 +68,7 @@ except ImportError:
 
 from importlib.metadata import version
 
+
 try:
     __version__ = version("incline")
 except Exception:
