@@ -145,7 +145,12 @@ class GPTrend:
 
         return self
 
-    def predict(self, x: npt.NDArray[np.float64], return_std: bool = True) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]] | npt.NDArray[np.float64]:
+    def predict(
+        self, x: npt.NDArray[np.float64], return_std: bool = True
+    ) -> (
+        tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
+        | npt.NDArray[np.float64]
+    ):
         """Predict function values at new locations.
 
         Parameters
@@ -168,7 +173,11 @@ class GPTrend:
         x = np.asarray(x).reshape(-1, 1)
         return self.gp.predict(x, return_std=return_std)
 
-    def predict_derivatives(self, x: npt.NDArray[np.float64], confidence_level: float = 0.95) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    def predict_derivatives(
+        self, x: npt.NDArray[np.float64], confidence_level: float = 0.95
+    ) -> tuple[
+        npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]
+    ]:
         """Predict derivatives and confidence intervals.
 
         Parameters

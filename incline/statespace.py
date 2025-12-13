@@ -93,7 +93,9 @@ class LocalLinearTrend:
 
         return kf
 
-    def _log_likelihood(self, params: npt.NDArray[np.float64], y: npt.NDArray[np.float64]) -> float:
+    def _log_likelihood(
+        self, params: npt.NDArray[np.float64], y: npt.NDArray[np.float64]
+    ) -> float:
         """Compute log-likelihood for parameter estimation."""
         obs_var, level_var, slope_var = np.exp(params)  # Ensure positive
 
@@ -219,7 +221,9 @@ class LocalLinearTrend:
 
     def get_level(
         self, confidence_level: float = 0.95
-    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    ) -> tuple[
+        npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]
+    ]:
         """Get estimated level (smoothed values) with confidence intervals.
 
         Parameters
@@ -260,7 +264,9 @@ class LocalLinearTrend:
 
     def get_slope(
         self, confidence_level: float = 0.95
-    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    ) -> tuple[
+        npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]
+    ]:
         """Get estimated slope (trend) with confidence intervals.
 
         Parameters
@@ -310,7 +316,10 @@ class StructuralTrendModel:
     """
 
     def __init__(
-        self, seasonal_periods: list[int] | None = None, damped_trend: bool = False, **kwargs: Any
+        self,
+        seasonal_periods: list[int] | None = None,
+        damped_trend: bool = False,
+        **kwargs: Any,
     ) -> None:
         """Initialize StructuralTrendModel.
 

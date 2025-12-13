@@ -353,7 +353,9 @@ def local_polynomial_trend(
     derivatives = np.zeros(n)
 
     # Kernel function
-    def kernel_weight(distances: npt.NDArray[np.float64], kernel_type: str) -> npt.NDArray[np.float64]:
+    def kernel_weight(
+        distances: npt.NDArray[np.float64], kernel_type: str
+    ) -> npt.NDArray[np.float64]:
         """Compute kernel weights for given distances."""
         u = distances / h
 

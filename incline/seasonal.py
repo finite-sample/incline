@@ -545,7 +545,9 @@ def deseasonalize_pipeline(
     >>> result = df.pipe(deseasonalize_pipeline('stl')).pipe(estimate_trend, 'spline')
     """
 
-    def _deseasonalize(df: pd.DataFrame, column_value: str = "value", time_column: str | None = None) -> pd.DataFrame:
+    def _deseasonalize(
+        df: pd.DataFrame, column_value: str = "value", time_column: str | None = None
+    ) -> pd.DataFrame:
         if decomposition_method == "stl":
             return stl_decompose(df, column_value, time_column, period, **decomp_kwargs)
         elif decomposition_method == "simple":

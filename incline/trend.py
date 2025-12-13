@@ -40,9 +40,7 @@ def compute_time_deltas(time_index: pd.Index) -> tuple[npt.NDArray[np.float64], 
 
 
 def naive_trend(
-    df: pd.DataFrame,
-    column_value: str = "value",
-    time_column: str | None = None
+    df: pd.DataFrame, column_value: str = "value", time_column: str | None = None
 ) -> pd.DataFrame:
     """naive_trend.
 

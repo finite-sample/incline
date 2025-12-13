@@ -54,7 +54,9 @@ class TrendFunction(ABC):
         pass
 
     @abstractmethod
-    def derivative(self, x: npt.NDArray[np.float64], order: int = 1) -> npt.NDArray[np.float64]:
+    def derivative(
+        self, x: npt.NDArray[np.float64], order: int = 1
+    ) -> npt.NDArray[np.float64]:
         """Evaluate the derivative at points x."""
         pass
 
@@ -81,7 +83,9 @@ class PolynomialTrend(TrendFunction):
     def __call__(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         return np.polyval(self.coefficients[::-1], x)
 
-    def derivative(self, x: npt.NDArray[np.float64], order: int = 1) -> npt.NDArray[np.float64]:
+    def derivative(
+        self, x: npt.NDArray[np.float64], order: int = 1
+    ) -> npt.NDArray[np.float64]:
         if order == 0:
             return self(x)
 
@@ -134,7 +138,9 @@ class SinusoidalTrend(TrendFunction):
     def __call__(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         return self.amplitude * np.sin(2 * np.pi * self.frequency * x + self.phase)
 
-    def derivative(self, x: npt.NDArray[np.float64], order: int = 1) -> npt.NDArray[np.float64]:
+    def derivative(
+        self, x: npt.NDArray[np.float64], order: int = 1
+    ) -> npt.NDArray[np.float64]:
         if order == 1:
             return (
                 self.amplitude
@@ -201,7 +207,9 @@ class ExponentialTrend(TrendFunction):
     def __call__(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         return self.scale * np.exp(self.rate * x)
 
-    def derivative(self, x: npt.NDArray[np.float64], order: int = 1) -> npt.NDArray[np.float64]:
+    def derivative(
+        self, x: npt.NDArray[np.float64], order: int = 1
+    ) -> npt.NDArray[np.float64]:
         return self.scale * (self.rate**order) * np.exp(self.rate * x)
 
     @property
@@ -240,7 +248,9 @@ class StepTrend(TrendFunction):
 
         return result
 
-    def derivative(self, x: npt.NDArray[np.float64], order: int = 1) -> npt.NDArray[np.float64]:
+    def derivative(
+        self, x: npt.NDArray[np.float64], order: int = 1
+    ) -> npt.NDArray[np.float64]:
         if order == 1:
             # Derivative is zero except at breakpoints (where it's undefined)
             return np.zeros_like(x)
@@ -638,7 +648,9 @@ def run_comprehensive_benchmark(
     return pd.DataFrame(results)
 
 
-def plot_benchmark_results(results_df: pd.DataFrame, metric: str = "mse_derivative") -> None:
+def plot_benchmark_results(
+    results_df: pd.DataFrame, metric: str = "mse_derivative"
+) -> None:
     """Plot benchmark results."""
     if not HAS_MATPLOTLIB:
         return

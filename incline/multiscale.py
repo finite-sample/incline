@@ -6,7 +6,6 @@ distinguish signal from noise at different resolutions.
 """
 
 import warnings
-from typing import Any
 
 import numpy as np
 import numpy.typing as npt
