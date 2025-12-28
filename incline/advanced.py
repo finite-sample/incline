@@ -5,7 +5,6 @@ the basic Savitzky-Golay and spline methods, including local polynomial
 regression, trend filtering, and state-space models.
 """
 
-
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
@@ -496,9 +495,11 @@ def estimate_trend(
             return local_polynomial_trend(df, column_value, time_column, **kwargs)
         case "spline":
             from .trend import spline_trend
+
             return spline_trend(df, column_value, time_column, **kwargs)
         case "sgolay":
             from .trend import sgolay_trend
+
             return sgolay_trend(df, column_value, time_column, **kwargs)
         case _:
             raise ValueError(f"Unknown method: {method}")

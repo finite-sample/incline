@@ -617,7 +617,9 @@ def bootstrap_derivative_ci(
                 time_column=time_column,
                 **method_kwargs,
             )
-            bootstrap_derivatives.append(np.asarray(boot_result["derivative_value"], dtype=float))
+            bootstrap_derivatives.append(
+                np.asarray(boot_result["derivative_value"], dtype=float)
+            )
         except Exception as e:
             # Log bootstrap failure and continue
             warnings.warn(f"Bootstrap sample failed: {e}", stacklevel=3)
