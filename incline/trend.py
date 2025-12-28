@@ -6,6 +6,7 @@ import numpy.typing as npt
 import pandas as pd
 from scipy.interpolate import UnivariateSpline
 from scipy.signal import savgol_filter
+from scipy.stats import iqr, rankdata, trim_mean
 
 
 def compute_time_deltas(time_index: pd.Index) -> tuple[npt.NDArray[np.float64], float]:
@@ -42,22 +43,22 @@ def compute_time_deltas(time_index: pd.Index) -> tuple[npt.NDArray[np.float64], 
 def naive_trend(
     df: pd.DataFrame, column_value: str = "value", time_column: str | None = None
 ) -> pd.DataFrame:
-    """naive_trend.
+    """Estimate trend using naive finite differences.
 
     Gives the naive slope: look to the right, look to the left,
     travel one unit each, and get the average change. At the ends,
     we merely use the left or the right value.
 
     Args:
-        df: pandas dataFrame time series object
-        column_value: column name containing the values
-        time_column: column name for time values (optional)
+        df: Pandas DataFrame time series object.
+        column_value: Column name containing the values.
+        time_column: Column name for time values (optional).
     """
     y = df[column_value]
 
     # Handle time scaling
     if time_column:
-        x = df[time_column].values
+        x = np.asarray(df[time_column], dtype=float)
         delta = float(np.median(np.diff(x)))
     elif isinstance(df.index, pd.DatetimeIndex):
         x, delta = compute_time_deltas(df.index)
@@ -98,32 +99,31 @@ def spline_trend(
     s: float | None = None,
     use_gcv: bool = False,
 ) -> pd.DataFrame:
-    """spline_trend.
+    """Estimate trend using spline interpolation.
 
-    Interpolates time series with splines of 'function_order'. And then
-    calculates the derivative_order using the smoothed function.
+    Interpolates time series with splines of specified order and then
+    calculates the derivative using the smoothed function.
 
     Args:
-        df: pandas dataFrame time series object
-        column_value: column name containing the values
-        time_column: column name for time values (optional)
-        function_order: spline order (default is 3)
-        derivative_order: (0, 1, 2, ... with default as 1)
-        s: smoothing factor (if None, auto-estimated)
-        use_gcv: use generalized cross-validation (requires scipy>=1.10)
+        df: Pandas DataFrame time series object.
+        column_value: Column name containing the values.
+        time_column: Column name for time values (optional).
+        function_order: Spline order (default is 3).
+        derivative_order: Order of derivative (0, 1, 2, ... with default as 1).
+        s: Smoothing factor (if None, auto-estimated).
+        use_gcv: Use generalized cross-validation (requires scipy>=1.10).
 
     Returns:
-        DataFrame: dataframe with 6 columns:- datetime,
-            function_order (value of the polynomial order), smoothed_value,
-            derivative_method, derivative_order, derivative_value.
+        DataFrame with 6 columns: datetime, function_order, smoothed_value,
+        derivative_method, derivative_order, derivative_value.
 
         A row can be 2012-01-01, "spline", 2, 1, 0
     """
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
 
     # Get time values
     if time_column:
-        x = df[time_column].values
+        x = np.asarray(df[time_column], dtype=float)
     elif isinstance(df.index, pd.DatetimeIndex):
         x, _delta = compute_time_deltas(df.index)
     else:
@@ -176,34 +176,33 @@ def sgolay_trend(
     window_length: int = 15,
     delta: float | None = None,
 ) -> pd.DataFrame:
-    """sgolay_trend.
+    """Estimate trend using Savitzky-Golay filtering.
 
-    Interpolates time series with savitzky-golay using polynomials of
-    'function_order'. And then calculates the derivative_order using
+    Interpolates time series with Savitzky-Golay using polynomials of
+    specified order and then calculates the derivative using
     the smoothed function.
 
     Args:
-        df: pandas dataFrame time series object
-        column_value: column name containing the values
-        time_column: column name for time values (optional)
-        window_length: window size (default is 15, must be odd)
-        function_order: polynomial order (default is 3)
-        derivative_order: (0, 1, 2, ... with default as 1)
-        delta: time step for derivative scaling (auto-computed if None)
+        df: Pandas DataFrame time series object.
+        column_value: Column name containing the values.
+        time_column: Column name for time values (optional).
+        window_length: Window size (default is 15, must be odd).
+        function_order: Polynomial order (default is 3).
+        derivative_order: Order of derivative (0, 1, 2, ... with default as 1).
+        delta: Time step for derivative scaling (auto-computed if None).
 
     Returns:
-        DataFrame: dataframe with 6 columns:- datetime,
-            function_order (value of the polynomial order), smoothed_value,
-            derivative_method, derivative_order, derivative_value.
+        DataFrame with 6 columns: datetime, function_order, smoothed_value,
+        derivative_method, derivative_order, derivative_value.
 
         Sample row: 2012-01-01, "sgolay", 2, 1, 0
     """
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
 
     # Get time delta for proper scaling
     if delta is None:
         if time_column:
-            x = df[time_column].values
+            x = np.asarray(df[time_column], dtype=float)
             delta = float(np.median(np.diff(x)))
         elif isinstance(df.index, pd.DatetimeIndex):
             x, delta = compute_time_deltas(df.index)
@@ -213,7 +212,7 @@ def sgolay_trend(
     # Check for irregular sampling
     if time_column or isinstance(df.index, pd.DatetimeIndex):
         if time_column:
-            x = df[time_column].values
+            x = np.asarray(df[time_column], dtype=float)
         else:
             x, _ = compute_time_deltas(df.index)
 
@@ -301,18 +300,7 @@ def trending(
     pd.DataFrame
         DataFrame with ranking results and optional confidence metrics
     """
-    try:
-        from scipy.stats import rankdata, trim_mean
-        from scipy.stats.mstats import winsorize
-
-        has_scipy_stats = True
-    except ImportError:
-        has_scipy_stats = False
-        if robust or max_or_avg in ["trimmed_mean", "huber"]:
-            warnings.warn(
-                "scipy.stats not available, falling back to basic statistics",
-                stacklevel=2,
-            )
+    from scipy.stats.mstats import winsorize
 
     # Check for empty input
     if not df_list:
@@ -337,7 +325,7 @@ def trending(
     results = []
 
     for id_val, group in tdf.groupby(column_id):
-        derivatives = group["derivative_value"].values
+        derivatives = np.asarray(group["derivative_value"], dtype=float)
 
         if len(derivatives) == 0:
             continue
@@ -349,26 +337,27 @@ def trending(
         if robust and max_or_avg == "avg":
             max_or_avg = "trimmed_mean"
 
-        if max_or_avg == "max":
-            trend_value = np.max(derivatives)
-        elif max_or_avg in ["avg", "mean"]:
-            if robust and has_scipy_stats:
-                # Use winsorized mean for robustness
-                winsorized = winsorize(
-                    derivatives, limits=[trim_fraction, trim_fraction]
-                )
-                trend_value = np.average(winsorized, weights=weights)
-            else:
-                trend_value = np.average(derivatives, weights=weights)
-        elif max_or_avg == "median":
-            trend_value = np.median(derivatives)
-        elif max_or_avg == "trimmed_mean" and has_scipy_stats:
-            trend_value = trim_mean(derivatives, trim_fraction)
-        elif max_or_avg == "huber" and has_scipy_stats:
-            trend_value = _huber_mean(derivatives)
-        else:
-            # Fallback to simple mean
-            trend_value = np.mean(derivatives)
+        match max_or_avg:
+            case "max":
+                trend_value = np.max(derivatives)
+            case "avg" | "mean":
+                if robust:
+                    # Use winsorized mean for robustness
+                    winsorized = winsorize(
+                        derivatives, limits=[trim_fraction, trim_fraction]
+                    )
+                    trend_value = np.average(winsorized, weights=weights)
+                else:
+                    trend_value = np.average(derivatives, weights=weights)
+            case "median":
+                trend_value = np.median(derivatives)
+            case "trimmed_mean":
+                trend_value = trim_mean(derivatives, trim_fraction)
+            case "huber":
+                trend_value = _huber_mean(derivatives)
+            case _:
+                # Fallback to simple mean
+                trend_value = np.mean(derivatives)
 
         result = {
             "id": id_val,
@@ -402,11 +391,7 @@ def trending(
         return pd.DataFrame(columns=["id", "trend_value"])
 
     # Add ranking
-    odf["rank"] = (
-        rankdata(-odf["trend_value"], method="ordinal")
-        if has_scipy_stats
-        else range(1, len(odf) + 1)
-    )
+    odf["rank"] = rankdata(-odf["trend_value"], method="ordinal")
 
     # Sort by rank
     odf = odf.sort_values("rank").reset_index(drop=True)
@@ -463,20 +448,13 @@ def _huber_mean(x: np.ndarray, c: float = 1.345) -> float:
 
 def _compute_robust_statistics(x: np.ndarray, weights: np.ndarray) -> dict:
     """Compute robust statistics for a time series."""
-    try:
-        from scipy.stats import iqr
-
-        has_iqr = True
-    except ImportError:
-        has_iqr = False
-
     x = np.asarray(x)
 
     stats = {
         "median": np.median(x),
         "mad": np.median(np.abs(x - np.median(x))),  # Median Absolute Deviation
         "std": np.std(x),
-        "iqr": np.percentile(x, 75) - np.percentile(x, 25) if not has_iqr else iqr(x),
+        "iqr": iqr(x),
         "n_obs": len(x),
     }
 
@@ -520,13 +498,6 @@ def _bootstrap_trend_ci(
     n_bootstrap: int = 100,
 ) -> tuple[float, float]:
     """Bootstrap confidence intervals for trend statistics."""
-    try:
-        from scipy.stats import trim_mean
-
-        has_trim_mean = True
-    except ImportError:
-        has_trim_mean = False
-
     bootstrap_stats = []
     n = len(values)
 
@@ -537,16 +508,17 @@ def _bootstrap_trend_ci(
         boot_weights = weights[indices] if len(weights) == n else np.ones(n)
 
         # Compute statistic
-        if statistic == "max":
-            boot_stat = float(np.max(boot_values))
-        elif statistic in ["avg", "mean"]:
-            boot_stat = float(np.average(boot_values, weights=boot_weights))
-        elif statistic == "median":
-            boot_stat = float(np.median(boot_values))
-        elif statistic == "trimmed_mean" and has_trim_mean:
-            boot_stat = float(trim_mean(boot_values, 0.1))
-        else:
-            boot_stat = float(np.mean(boot_values))
+        match statistic:
+            case "max":
+                boot_stat = float(np.max(boot_values))
+            case "avg" | "mean":
+                boot_stat = float(np.average(boot_values, weights=boot_weights))
+            case "median":
+                boot_stat = float(np.median(boot_values))
+            case "trimmed_mean":
+                boot_stat = float(trim_mean(boot_values, 0.1))
+            case _:
+                boot_stat = float(np.mean(boot_values))
 
         bootstrap_stats.append(boot_stat)
 
@@ -633,7 +605,7 @@ def bootstrap_derivative_ci(
         bootstrap_df = pd.concat(blocks, ignore_index=True).iloc[:n]
         # Preserve time structure if using time column
         if time_column:
-            bootstrap_df[time_column] = df[time_column].values
+            bootstrap_df[time_column] = np.asarray(df[time_column], dtype=float)
         elif isinstance(df.index, pd.DatetimeIndex):
             bootstrap_df.index = df.index
 
@@ -645,7 +617,7 @@ def bootstrap_derivative_ci(
                 time_column=time_column,
                 **method_kwargs,
             )
-            bootstrap_derivatives.append(boot_result["derivative_value"].values)
+            bootstrap_derivatives.append(np.asarray(boot_result["derivative_value"], dtype=float))
         except Exception as e:
             # Log bootstrap failure and continue
             warnings.warn(f"Bootstrap sample failed: {e}", stacklevel=3)

@@ -5,25 +5,12 @@ the basic Savitzky-Golay and spline methods, including local polynomial
 regression, trend filtering, and state-space models.
 """
 
+
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-
-
-# Check for optional dependencies
-try:
-    from statsmodels.nonparametric.smoothers_lowess import lowess
-
-    HAS_STATSMODELS = True
-except ImportError:
-    HAS_STATSMODELS = False
-
-try:
-    from sklearn.preprocessing import PolynomialFeatures
-
-    HAS_SKLEARN = True
-except ImportError:
-    HAS_SKLEARN = False
+from sklearn.preprocessing import PolynomialFeatures
+from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from .trend import compute_time_deltas
 
@@ -43,45 +30,28 @@ def loess_trend(
     This is the canonical nonparametric derivative estimator with good statistical
     properties.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Time series data
-    column_value : str
-        Column name containing the values
-    time_column : str, optional
-        Column name for time values (if None, uses index)
-    frac : float
-        Fraction of data to use for each local regression (bandwidth)
-    derivative_order : int
-        Order of derivative (1 for slope, 2 for acceleration)
-    degree : int
-        Degree of local polynomial (1=linear, 2=quadratic)
-    robust : bool
-        Use robust fitting to downweight outliers
+    Args:
+        df: Time series data.
+        column_value: Column name containing the values.
+        time_column: Column name for time values (if None, uses index).
+        frac: Fraction of data to use for each local regression (bandwidth).
+        derivative_order: Order of derivative (1 for slope, 2 for acceleration).
+        degree: Degree of local polynomial (1=linear, 2=quadratic).
+        robust: Use robust fitting to downweight outliers.
 
     Returns:
-    -------
-    pd.DataFrame
-        Original data plus smoothed values and derivatives
+        Original data plus smoothed values and derivatives.
 
-    Notes:
-    -----
-    This function wraps statsmodels LOWESS and estimates derivatives by
-    fitting local polynomials in a sliding window around each point.
-    The derivative is extracted from the polynomial coefficients.
+    Note:
+        This function wraps statsmodels LOWESS and estimates derivatives by
+        fitting local polynomials in a sliding window around each point.
+        The derivative is extracted from the polynomial coefficients.
     """
-    if not HAS_STATSMODELS:
-        raise ImportError(
-            "statsmodels is required for LOESS trend estimation. "
-            "Install with: pip install statsmodels"
-        )
-
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
 
     # Get time values
     if time_column:
-        x = df[time_column].values
+        x = np.asarray(df[time_column], dtype=float)
     elif isinstance(df.index, pd.DatetimeIndex):
         x, _delta = compute_time_deltas(df.index)
     else:
@@ -138,7 +108,9 @@ def loess_trend(
             else:
                 derivatives[i] = np.nan
 
-        except (np.linalg.LinAlgError, np.RankWarning):
+        except np.linalg.LinAlgError:
+            derivatives[i] = np.nan
+        except Warning:
             derivatives[i] = np.nan
 
     # Create output dataframe
@@ -196,12 +168,12 @@ def l1_trend_filter(
     This implements the L1 trend filtering algorithm using ADMM.
     The result is a piecewise polynomial trend with sparse changes.
     """
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
     n = len(y)
 
     # Get time values (for proper scaling)
     if time_column:
-        x = df[time_column].values
+        x = np.asarray(df[time_column], dtype=float)
         delta = np.median(np.diff(x))
     elif isinstance(df.index, pd.DatetimeIndex):
         x, delta = compute_time_deltas(df.index)
@@ -306,40 +278,24 @@ def local_polynomial_trend(
     This implements the Fan-Gijbels local polynomial estimator, which is
     the theoretical foundation for nonparametric derivative estimation.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Time series data
-    column_value : str
-        Column name containing values
-    time_column : str, optional
-        Time column name
-    bandwidth : float
-        Bandwidth parameter (fraction of data range)
-    degree : int
-        Polynomial degree for local fits
-    kernel : str
-        Kernel function ('gaussian', 'epanechnikov', 'uniform')
-    derivative_order : int
-        Order of derivative to estimate
+    Args:
+        df: Time series data.
+        column_value: Column name containing values.
+        time_column: Time column name.
+        bandwidth: Bandwidth parameter (fraction of data range).
+        degree: Polynomial degree for local fits.
+        kernel: Kernel function ('gaussian', 'epanechnikov', 'uniform').
+        derivative_order: Order of derivative to estimate.
 
     Returns:
-    -------
-    pd.DataFrame
-        Results with smoothed values and derivatives
+        Results with smoothed values and derivatives.
     """
-    if not HAS_SKLEARN:
-        raise ImportError(
-            "scikit-learn is required for local polynomial estimation. "
-            "Install with: pip install scikit-learn"
-        )
-
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
     n = len(y)
 
     # Get time values
     if time_column:
-        x = df[time_column].values
+        x = np.asarray(df[time_column], dtype=float)
     elif isinstance(df.index, pd.DatetimeIndex):
         x, _delta = compute_time_deltas(df.index)
     else:
@@ -359,14 +315,15 @@ def local_polynomial_trend(
         """Compute kernel weights for given distances."""
         u = distances / h
 
-        if kernel_type == "gaussian":
-            return np.exp(-0.5 * u**2)
-        elif kernel_type == "epanechnikov":
-            return np.maximum(0, 0.75 * (1 - u**2))
-        elif kernel_type == "uniform":
-            return (np.abs(u) <= 1).astype(float)
-        else:
-            raise ValueError(f"Unknown kernel: {kernel_type}")
+        match kernel_type:
+            case "gaussian":
+                return np.exp(-0.5 * u**2)
+            case "epanechnikov":
+                return np.maximum(0, 0.75 * (1 - u**2))
+            case "uniform":
+                return (np.abs(u) <= 1).astype(float)
+            case _:
+                raise ValueError(f"Unknown kernel: {kernel_type}")
 
     # Fit local polynomial at each point
     for i in range(n):
@@ -452,11 +409,11 @@ def select_trend_method(
         Recommended method name
     """
     n = len(df)
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
 
     # Get time regularity
     if time_column:
-        x = df[time_column].values
+        x = np.asarray(df[time_column], dtype=float)
         time_regular = np.std(np.diff(x)) / np.mean(np.diff(x)) < 0.05
     elif isinstance(df.index, pd.DatetimeIndex):
         x, _ = compute_time_deltas(df.index)
@@ -487,7 +444,7 @@ def select_trend_method(
             return "loess"  # Generally robust choice
 
     elif criteria == "robust":
-        return "loess" if HAS_STATSMODELS else "l1_filter"
+        return "loess"
 
     elif criteria == "smooth":
         return "spline"
@@ -530,19 +487,18 @@ def estimate_trend(
     if method == "auto":
         method = select_trend_method(df, column_value, time_column)
 
-    if method == "loess":
-        return loess_trend(df, column_value, time_column, **kwargs)
-    elif method == "l1_filter":
-        return l1_trend_filter(df, column_value, time_column, **kwargs)
-    elif method == "local_poly":
-        return local_polynomial_trend(df, column_value, time_column, **kwargs)
-    elif method == "spline":
-        from .trend import spline_trend
-
-        return spline_trend(df, column_value, time_column, **kwargs)
-    elif method == "sgolay":
-        from .trend import sgolay_trend
-
-        return sgolay_trend(df, column_value, time_column, **kwargs)
-    else:
-        raise ValueError(f"Unknown method: {method}")
+    match method:
+        case "loess":
+            return loess_trend(df, column_value, time_column, **kwargs)
+        case "l1_filter":
+            return l1_trend_filter(df, column_value, time_column, **kwargs)
+        case "local_poly":
+            return local_polynomial_trend(df, column_value, time_column, **kwargs)
+        case "spline":
+            from .trend import spline_trend
+            return spline_trend(df, column_value, time_column, **kwargs)
+        case "sgolay":
+            from .trend import sgolay_trend
+            return sgolay_trend(df, column_value, time_column, **kwargs)
+        case _:
+            raise ValueError(f"Unknown method: {method}")

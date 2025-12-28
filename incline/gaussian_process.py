@@ -12,21 +12,13 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-
-
-# Check for optional dependencies
-try:
-    from sklearn.gaussian_process import GaussianProcessRegressor
-    from sklearn.gaussian_process.kernels import (
-        RBF,
-        ConstantKernel,
-        Matern,
-        WhiteKernel,
-    )
-
-    HAS_SKLEARN = True
-except ImportError:
-    HAS_SKLEARN = False
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import (
+    RBF,
+    ConstantKernel,
+    Matern,
+    WhiteKernel,
+)
 
 from .trend import compute_time_deltas
 
@@ -59,12 +51,6 @@ class GPTrend:
         n_restarts_optimizer : int
             Number of optimizer restarts for hyperparameter optimization
         """
-        if not HAS_SKLEARN:
-            raise ImportError(
-                "scikit-learn is required for Gaussian Process estimation. "
-                "Install with: pip install scikit-learn"
-            )
-
         self.kernel_type = kernel_type
         self.length_scale = length_scale
         self.noise_level = noise_level
@@ -87,14 +73,15 @@ class GPTrend:
         else:
             noise_level = 0.1
 
-        if self.kernel_type == "rbf":
-            kernel = ConstantKernel(1.0) * RBF(length_scale=length_scale)
-        elif self.kernel_type == "matern32":
-            kernel = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=1.5)
-        elif self.kernel_type == "matern52":
-            kernel = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=2.5)
-        else:
-            raise ValueError(f"Unknown kernel type: {self.kernel_type}")
+        match self.kernel_type:
+            case "rbf":
+                kernel = ConstantKernel(1.0) * RBF(length_scale=length_scale)
+            case "matern32":
+                kernel = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=1.5)
+            case "matern52":
+                kernel = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=2.5)
+            case _:
+                raise ValueError(f"Unknown kernel type: {self.kernel_type}")
 
         # Add noise component
         kernel = kernel + WhiteKernel(noise_level=noise_level)
@@ -271,17 +258,11 @@ def gp_trend(
     pd.DataFrame
         Results with GP trend estimates and derivatives
     """
-    if not HAS_SKLEARN:
-        raise ImportError(
-            "scikit-learn is required for Gaussian Process estimation. "
-            "Install with: pip install scikit-learn"
-        )
-
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
 
     # Get time values
     if time_column:
-        x = df[time_column].values
+        x = np.asarray(df[time_column], dtype=float)
         delta = np.median(np.diff(x))
     elif isinstance(df.index, pd.DatetimeIndex):
         x, delta = compute_time_deltas(df.index)
@@ -369,9 +350,6 @@ def adaptive_gp_trend(
     pd.DataFrame
         Adaptive GP trend estimates
     """
-    if not HAS_SKLEARN:
-        raise ImportError("scikit-learn required for adaptive GP estimation")
-
     n = len(df)
     if n < window_size:
         # Fall back to standard GP
@@ -479,7 +457,7 @@ def select_gp_kernel(
     str
         Recommended kernel type
     """
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
     n = len(y)
 
     # Check for smoothness (higher order differences)

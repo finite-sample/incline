@@ -58,7 +58,7 @@ def detect_seasonality(
         - 'strength': float, strength of seasonality (0-1)
         - 'method': str, detection method used
     """
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
     n = len(y)
 
     if max_period is None:
@@ -206,7 +206,7 @@ def stl_decompose(
             "Install with: pip install statsmodels"
         )
 
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
     n = len(y)
 
     # Auto-detect period if not provided
@@ -296,7 +296,7 @@ def simple_deseasonalize(
     pd.DataFrame
         Original data plus deseasonalized components
     """
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
     n = len(y)
 
     # Auto-detect period if not provided

@@ -461,7 +461,7 @@ def benchmark_method(
         computation_time = time.time() - start_time
 
         # Extract derivatives
-        estimated_derivative = result["derivative_value"].values
+        estimated_derivative = np.asarray(result["derivative_value"], dtype=float)
 
         # Remove NaN values for comparison
         valid_mask = ~(np.isnan(estimated_derivative) | np.isnan(true_derivative))
@@ -484,8 +484,8 @@ def benchmark_method(
             "derivative_ci_lower" in result.columns
             and "derivative_ci_upper" in result.columns
         ):
-            ci_lower = result["derivative_ci_lower"].values[valid_mask]
-            ci_upper = result["derivative_ci_upper"].values[valid_mask]
+            ci_lower = np.asarray(result["derivative_ci_lower"], dtype=float)[valid_mask]
+            ci_upper = np.asarray(result["derivative_ci_upper"], dtype=float)[valid_mask]
 
             # Calculate coverage
             in_ci_95 = (true_valid >= ci_lower) & (true_valid <= ci_upper)
