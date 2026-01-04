@@ -15,8 +15,6 @@ The package provides a couple of ways of approximating the underlying function f
 
 The package provides a way to estimate the first and second derivative at any given time using either of those methods. Beyond these smarter methods, the package also provides a way a naive estimator of slope---average change when you move one-step forward (step = observed time units) and one-step backward. The users can also calculate average or max. slope over a time window (over observed time steps).
 
-The difference between naive estimates and estimates based on smoothed time series can be substantial. In the [example](https://github.com/finite-sample/incline/blob/master/examples/incline_example.ipynb) we provide, the correlation is -.47.
-
 ## Clarification
 
 Sometimes we want to know what the "trend" was over a particular time window. But what that means is not 100% clear. For a synopsis of the issues, see [here](http://gbytes.gsood.com/2018/06/22/talking-on-a-tangent/).
