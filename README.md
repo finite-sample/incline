@@ -5,7 +5,7 @@
 [![CI](https://github.com/finite-sample/incline/actions/workflows/ci.yml/badge.svg)](https://github.com/finite-sample/incline/actions?query=workflow%3Aci)
 [![Docs](https://img.shields.io/badge/docs-github.io-blue)](https://finite-sample.github.io/incline/)
 
-Trends in time series are valuable. If the cost of a product rises suddenly, it likely indicates a sudden shortfall in supply or a sudden rise in demand. If the cost of claims filed by a patient rises sharply, it may suggest rapidly worsening health. But how do we estimate the trend at a particular time in a noisy time series? Smooth the time series using any one of the many methods, local polynomials or via GAMs or similar such methods, and then estimate the derivative(s) of the function at the chosen point in time.
+Estimating the trend (derivative) at a specific point in a noisy time series is difficult because naive approaches like computing differences between consecutive observations amplify noise rather than reveal the underlying signal. Incline addresses this by first smoothing the time series using either Savitzky-Golay filters (local polynomial fitting) or smoothing splines, then estimating the first or second derivative of the smoothed function at chosen points in time. The difference between naive and smoothed estimates can be substantial: in the provided example, the correlation between them is -0.47, making the choice of method consequential for applications like detecting sudden cost increases or identifying rapidly changing patient health trajectories.
 
 The package provides a couple of ways of approximating the underlying function for the time series:
 
