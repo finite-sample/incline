@@ -1,4 +1,4 @@
-# incline: Estimate Trend at a Particular Point in a Noisy Time Series
+# incline: Estimate Local Trend in a Noisy Time Series
 
 [![PyPI version](https://img.shields.io/pypi/v/incline.svg)](https://pypi.python.org/pypi/incline)
 [![Downloads](https://static.pepy.tech/badge/incline)](https://pepy.tech/project/incline)
