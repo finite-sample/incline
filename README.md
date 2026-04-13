@@ -37,7 +37,7 @@ Silly as it is, for now, we assume that the time series is a) complete, and b) i
 
 The package wraps the functions for doing local smoothing and derivative estimation for a standardized interface. We use this standard interface to estimate the trend at a particular set of points in parallel for thousands of time series.
 
-The package `incline` exposes 4 functions:
+The package `incline` exposes the following core functions (plus additional methods for Gaussian processes, Kalman filtering, SiZer analysis, and seasonal decomposition—see [documentation](https://finite-sample.github.io/incline/) for the full API):
 
 1. **`naive_trend`**:
     
@@ -126,7 +126,7 @@ pip install incline
 ```python
 from incline import spline_trend
 
-locpol = spline_trend(time_series, , ...)
+result = spline_trend(df, column_value='value')
 ```
 
 ## Examples

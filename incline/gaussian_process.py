@@ -7,7 +7,7 @@ confidence intervals.
 """
 
 import warnings
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -158,7 +158,12 @@ class GPTrend:
             raise ValueError("Must fit GP before prediction")
 
         x = np.asarray(x).reshape(-1, 1)
-        return self.gp.predict(x, return_std=return_std)
+        result = self.gp.predict(x, return_std=return_std)
+        return cast(
+            tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
+            | npt.NDArray[np.float64],
+            result,
+        )
 
     def predict_derivatives(
         self, x: npt.NDArray[np.float64], confidence_level: float = 0.95
@@ -196,8 +201,13 @@ class GPTrend:
         x_minus = x - dx
 
         # Get predictions at x+dx and x-dx
-        y_plus, std_plus = self.gp.predict(x_plus, return_std=True)
-        y_minus, std_minus = self.gp.predict(x_minus, return_std=True)
+        y_plus_raw, std_plus_raw = self.gp.predict(x_plus, return_std=True)
+        y_minus_raw, std_minus_raw = self.gp.predict(x_minus, return_std=True)
+
+        y_plus = np.asarray(y_plus_raw, dtype=np.float64)
+        y_minus = np.asarray(y_minus_raw, dtype=np.float64)
+        std_plus = np.asarray(std_plus_raw, dtype=np.float64)
+        std_minus = np.asarray(std_minus_raw, dtype=np.float64)
 
         # Compute derivative via finite differences
         dy_mean = (y_plus - y_minus) / (2 * dx)
@@ -211,18 +221,22 @@ class GPTrend:
         from scipy.stats import norm
 
         alpha = 1 - confidence_level
-        z_score = norm.ppf(1 - alpha / 2)
+        z_score = float(norm.ppf(1 - alpha / 2))
 
         dy_lower = dy_mean - z_score * dy_std
         dy_upper = dy_mean + z_score * dy_std
 
-        return dy_mean.flatten(), dy_lower.flatten(), dy_upper.flatten()
+        return (
+            dy_mean.flatten().astype(np.float64),
+            dy_lower.flatten().astype(np.float64),
+            dy_upper.flatten().astype(np.float64),
+        )
 
     def get_kernel_params(self) -> dict[str, Any]:
         """Get fitted kernel hyperparameters."""
         if self.gp is None:
             raise ValueError("Must fit GP before accessing parameters")
-        return self.gp.kernel_.get_params()
+        return self.gp.kernel_.get_params()  # type: ignore[union-attr]
 
 
 def gp_trend(
@@ -409,11 +423,7 @@ def adaptive_gp_trend(
         for arr in [smoothed_values, derivatives, ci_lower, ci_upper]:
             if np.any(~np.isnan(arr)):
                 arr[:] = (
-                    pd.Series(arr)
-                    .interpolate()
-                    .fillna(method="bfill")
-                    .fillna(method="ffill")
-                    .values
+                    pd.Series(arr).interpolate().bfill().ffill().values
                 )
 
     # Create output dataframe

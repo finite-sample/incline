@@ -8,7 +8,7 @@ module-root = "."
 
 [project]
 name = "incline"
-version = "0.4.0"
+version = "0.5.0"
 description = "Estimate Trend at a Particular Point in a Noisy Time Series"
 authors = [
     {name = "Suriyan Laohaprapanon", email = "suriyant@gmail.com"},
