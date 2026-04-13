@@ -410,11 +410,11 @@ def kalman_trend(
     pd.DataFrame
         Results with trend estimates and confidence intervals
     """
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
 
     # Handle time scaling if needed
     if time_column:
-        x = df[time_column].values
+        x = np.asarray(df[time_column], dtype=float)
         delta = np.median(np.diff(x))
     elif isinstance(df.index, pd.DatetimeIndex):
         x, delta = compute_time_deltas(df.index)
@@ -517,7 +517,7 @@ def adaptive_kalman_trend(
     pd.DataFrame
         Adaptive trend estimates
     """
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
     n = len(y)
 
     if n < adaptation_window:
@@ -602,7 +602,7 @@ def select_kalman_model(
     str
         Recommended model type
     """
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
     n = len(y)
 
     # Check for seasonality

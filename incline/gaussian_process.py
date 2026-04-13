@@ -7,26 +7,18 @@ confidence intervals.
 """
 
 import warnings
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-
-
-# Check for optional dependencies
-try:
-    from sklearn.gaussian_process import GaussianProcessRegressor
-    from sklearn.gaussian_process.kernels import (
-        RBF,
-        ConstantKernel,
-        Matern,
-        WhiteKernel,
-    )
-
-    HAS_SKLEARN = True
-except ImportError:
-    HAS_SKLEARN = False
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import (
+    RBF,
+    ConstantKernel,
+    Matern,
+    WhiteKernel,
+)
 
 from .trend import compute_time_deltas
 
@@ -59,12 +51,6 @@ class GPTrend:
         n_restarts_optimizer : int
             Number of optimizer restarts for hyperparameter optimization
         """
-        if not HAS_SKLEARN:
-            raise ImportError(
-                "scikit-learn is required for Gaussian Process estimation. "
-                "Install with: pip install scikit-learn"
-            )
-
         self.kernel_type = kernel_type
         self.length_scale = length_scale
         self.noise_level = noise_level
@@ -87,14 +73,15 @@ class GPTrend:
         else:
             noise_level = 0.1
 
-        if self.kernel_type == "rbf":
-            kernel = ConstantKernel(1.0) * RBF(length_scale=length_scale)
-        elif self.kernel_type == "matern32":
-            kernel = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=1.5)
-        elif self.kernel_type == "matern52":
-            kernel = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=2.5)
-        else:
-            raise ValueError(f"Unknown kernel type: {self.kernel_type}")
+        match self.kernel_type:
+            case "rbf":
+                kernel = ConstantKernel(1.0) * RBF(length_scale=length_scale)
+            case "matern32":
+                kernel = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=1.5)
+            case "matern52":
+                kernel = ConstantKernel(1.0) * Matern(length_scale=length_scale, nu=2.5)
+            case _:
+                raise ValueError(f"Unknown kernel type: {self.kernel_type}")
 
         # Add noise component
         kernel = kernel + WhiteKernel(noise_level=noise_level)
@@ -171,7 +158,12 @@ class GPTrend:
             raise ValueError("Must fit GP before prediction")
 
         x = np.asarray(x).reshape(-1, 1)
-        return self.gp.predict(x, return_std=return_std)
+        result = self.gp.predict(x, return_std=return_std)
+        return cast(
+            tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
+            | npt.NDArray[np.float64],
+            result,
+        )
 
     def predict_derivatives(
         self, x: npt.NDArray[np.float64], confidence_level: float = 0.95
@@ -209,8 +201,13 @@ class GPTrend:
         x_minus = x - dx
 
         # Get predictions at x+dx and x-dx
-        y_plus, std_plus = self.gp.predict(x_plus, return_std=True)
-        y_minus, std_minus = self.gp.predict(x_minus, return_std=True)
+        y_plus_raw, std_plus_raw = self.gp.predict(x_plus, return_std=True)
+        y_minus_raw, std_minus_raw = self.gp.predict(x_minus, return_std=True)
+
+        y_plus = np.asarray(y_plus_raw, dtype=np.float64)
+        y_minus = np.asarray(y_minus_raw, dtype=np.float64)
+        std_plus = np.asarray(std_plus_raw, dtype=np.float64)
+        std_minus = np.asarray(std_minus_raw, dtype=np.float64)
 
         # Compute derivative via finite differences
         dy_mean = (y_plus - y_minus) / (2 * dx)
@@ -224,18 +221,22 @@ class GPTrend:
         from scipy.stats import norm
 
         alpha = 1 - confidence_level
-        z_score = norm.ppf(1 - alpha / 2)
+        z_score = float(norm.ppf(1 - alpha / 2))
 
         dy_lower = dy_mean - z_score * dy_std
         dy_upper = dy_mean + z_score * dy_std
 
-        return dy_mean.flatten(), dy_lower.flatten(), dy_upper.flatten()
+        return (
+            dy_mean.flatten().astype(np.float64),
+            dy_lower.flatten().astype(np.float64),
+            dy_upper.flatten().astype(np.float64),
+        )
 
     def get_kernel_params(self) -> dict[str, Any]:
         """Get fitted kernel hyperparameters."""
         if self.gp is None:
             raise ValueError("Must fit GP before accessing parameters")
-        return self.gp.kernel_.get_params()
+        return self.gp.kernel_.get_params()  # type: ignore[union-attr]
 
 
 def gp_trend(
@@ -271,17 +272,11 @@ def gp_trend(
     pd.DataFrame
         Results with GP trend estimates and derivatives
     """
-    if not HAS_SKLEARN:
-        raise ImportError(
-            "scikit-learn is required for Gaussian Process estimation. "
-            "Install with: pip install scikit-learn"
-        )
-
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
 
     # Get time values
     if time_column:
-        x = df[time_column].values
+        x = np.asarray(df[time_column], dtype=float)
         delta = np.median(np.diff(x))
     elif isinstance(df.index, pd.DatetimeIndex):
         x, delta = compute_time_deltas(df.index)
@@ -369,9 +364,6 @@ def adaptive_gp_trend(
     pd.DataFrame
         Adaptive GP trend estimates
     """
-    if not HAS_SKLEARN:
-        raise ImportError("scikit-learn required for adaptive GP estimation")
-
     n = len(df)
     if n < window_size:
         # Fall back to standard GP
@@ -431,11 +423,7 @@ def adaptive_gp_trend(
         for arr in [smoothed_values, derivatives, ci_lower, ci_upper]:
             if np.any(~np.isnan(arr)):
                 arr[:] = (
-                    pd.Series(arr)
-                    .interpolate()
-                    .fillna(method="bfill")
-                    .fillna(method="ffill")
-                    .values
+                    pd.Series(arr).interpolate().bfill().ffill().values
                 )
 
     # Create output dataframe
@@ -479,7 +467,7 @@ def select_gp_kernel(
     str
         Recommended kernel type
     """
-    y = df[column_value].values
+    y = np.asarray(df[column_value], dtype=float)
     n = len(y)
 
     # Check for smoothness (higher order differences)

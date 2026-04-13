@@ -5,12 +5,18 @@ across multiple smoothing scales. This helps identify robust trend features and
 distinguish signal from noise at different resolutions.
 """
 
+from __future__ import annotations
+
 import warnings
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 # Check for optional dependencies
 try:
@@ -20,6 +26,8 @@ try:
     HAS_MATPLOTLIB = True
 except ImportError:
     HAS_MATPLOTLIB = False
+    mcolors = None  # type: ignore[assignment]
+    plt = None  # type: ignore[assignment]
 
 try:
     from scipy.stats import norm
@@ -27,6 +35,7 @@ try:
     HAS_SCIPY_STATS = True
 except ImportError:
     HAS_SCIPY_STATS = False
+    norm = None  # type: ignore[assignment]
 
 from .trend import compute_time_deltas
 
@@ -106,9 +115,9 @@ class SiZer:
                     df_temp["time"] = x
                     result = loess_trend(df_temp, time_column="time", frac=bandwidth)
 
-                derivatives = result["derivative_value"].values
+                derivatives = np.asarray(result["derivative_value"].values, dtype=np.float64)
                 # Approximate standard errors from residuals
-                residuals = y - result["smoothed_value"].values
+                residuals = y - np.asarray(result["smoothed_value"].values, dtype=np.float64)
                 residual_std = np.std(residuals)
                 std_errors = np.full(n, residual_std / np.sqrt(max(1, bandwidth * n)))
 
@@ -132,10 +141,13 @@ class SiZer:
                         df_temp, time_column="time", length_scale=bandwidth * np.ptp(x)
                     )
 
-                derivatives = result["derivative_value"].values
+                derivatives = np.asarray(result["derivative_value"].values, dtype=np.float64)
                 # Use GP uncertainty
                 ci_width = result["derivative_ci_upper"] - result["derivative_ci_lower"]
-                std_errors = ci_width / (2 * norm.ppf(0.975))  # Convert CI to SE
+                if HAS_SCIPY_STATS and norm is not None:
+                    std_errors = np.asarray(ci_width / (2 * norm.ppf(0.975)), dtype=np.float64)
+                else:
+                    std_errors = np.asarray(ci_width / 3.92, dtype=np.float64)
 
             except ImportError:
                 derivatives, std_errors = self._local_polynomial_derivatives(
@@ -147,7 +159,7 @@ class SiZer:
 
             df_temp = pd.DataFrame({"value": y})
             # Map bandwidth to spline smoothing parameter
-            s = bandwidth * n * np.var(y)
+            s = float(bandwidth * n * np.var(y))
             if not isinstance(x[0], (int, float)):
                 df_temp.index = x
                 result = spline_trend(df_temp, s=s)
@@ -155,9 +167,9 @@ class SiZer:
                 df_temp["time"] = x
                 result = spline_trend(df_temp, time_column="time", s=s)
 
-            derivatives = result["derivative_value"].values
+            derivatives = np.asarray(result["derivative_value"].values, dtype=np.float64)
             # Approximate standard errors
-            residuals = y - result["smoothed_value"].values
+            residuals = y - np.asarray(result["smoothed_value"].values, dtype=np.float64)
             residual_std = np.std(residuals)
             std_errors = np.full(n, residual_std * np.sqrt(bandwidth))
 
@@ -167,7 +179,10 @@ class SiZer:
                 x, y, bandwidth
             )
 
-        return derivatives, std_errors
+        return (
+            np.asarray(derivatives, dtype=np.float64),
+            np.asarray(std_errors, dtype=np.float64),
+        )
 
     def _local_polynomial_derivatives(
         self, x: npt.NDArray[np.float64], y: npt.NDArray[np.float64], bandwidth: float
@@ -219,7 +234,7 @@ class SiZer:
         df: pd.DataFrame,
         column_value: str = "value",
         time_column: str | None = None,
-    ) -> "SiZer":
+    ) -> SiZer:
         """Compute SiZer map for the given data.
 
         Parameters
@@ -287,13 +302,19 @@ class SiZer:
 
     def _compute_significance_map(self, bandwidths: npt.NDArray[np.float64]) -> None:
         """Compute significance classification for each (x, bandwidth) pair."""
-        if not HAS_SCIPY_STATS:
+        if self.derivative_estimates is None or self.derivative_se is None:
+            raise ValueError("derivative_estimates and derivative_se must be set before computing significance map")
+
+        deriv_est = self.derivative_estimates
+        deriv_se = self.derivative_se
+
+        if not HAS_SCIPY_STATS or norm is None:
             warnings.warn(
                 "scipy.stats not available, using simple thresholding", stacklevel=2
             )
             # Simple thresholding without proper statistics
             threshold = 2.0  # Rough approximation
-            t_stats = self.derivative_estimates / (self.derivative_se + 1e-10)
+            t_stats = deriv_est / (deriv_se + 1e-10)
 
             self.significance_map = np.zeros_like(t_stats, dtype=int)
             self.significance_map[t_stats > threshold] = 1  # Increasing
@@ -304,11 +325,11 @@ class SiZer:
             alpha = 1 - self.confidence_level
 
             # Compute t-statistics
-            t_stats = self.derivative_estimates / (self.derivative_se + 1e-10)
+            t_stats = deriv_est / (deriv_se + 1e-10)
 
             # Critical value (two-tailed test)
             # Note: This is approximate - exact degrees of freedom would depend on bandwidth
-            critical_value = norm.ppf(1 - alpha / 2)
+            critical_value = float(norm.ppf(1 - alpha / 2))
 
             # Classify significance
             self.significance_map = np.zeros_like(t_stats, dtype=int)
@@ -330,7 +351,13 @@ class SiZer:
         pd.DataFrame
             Long-format DataFrame with columns: x, bandwidth, derivative, significance
         """
-        if self.significance_map is None:
+        if (
+            self.significance_map is None
+            or self.bandwidths is None
+            or self.x_values is None
+            or self.derivative_estimates is None
+            or self.derivative_se is None
+        ):
             raise ValueError("Must fit SiZer before getting results")
 
         results = []
@@ -364,13 +391,14 @@ class SiZer:
             Dictionary with 'increasing' and 'decreasing' keys, each containing
             list of (x_start, x_end) tuples for significant regions
         """
-        if self.significance_map is None:
+        if self.significance_map is None or self.x_values is None:
             raise ValueError("Must fit SiZer before finding features")
 
-        features = {"increasing": [], "decreasing": []}
+        x_values = self.x_values
+        features: dict[str, list[tuple[Any, Any]]] = {"increasing": [], "decreasing": []}
 
         # For each x location, check if there's persistent significance
-        for j in range(len(self.x_values)):
+        for j in range(len(x_values)):
             sig_column = self.significance_map[:, j]
 
             # Find runs of same significance
@@ -383,7 +411,7 @@ class SiZer:
                 else:
                     # End of run - check if it was long enough
                     if run_length >= min_persistence and current_sig != 0:
-                        x_val = self.x_values[j]
+                        x_val = x_values[j]
                         if current_sig == 1:
                             features["increasing"].append((x_val, x_val))
                         elif current_sig == -1:
@@ -395,7 +423,7 @@ class SiZer:
 
             # Check final run
             if run_length >= min_persistence and current_sig != 0:
-                x_val = self.x_values[j]
+                x_val = x_values[j]
                 if current_sig == 1:
                     features["increasing"].append((x_val, x_val))
                 elif current_sig == -1:
@@ -404,11 +432,11 @@ class SiZer:
         # Merge adjacent x-values into regions
         for key in features:
             if features[key]:
-                merged = []
+                merged: list[tuple[Any, Any]] = []
                 current_start, current_end = features[key][0]
 
                 for start, end in features[key][1:]:
-                    if start <= current_end + np.median(np.diff(self.x_values)):
+                    if start <= current_end + np.median(np.diff(x_values)):
                         # Adjacent or overlapping - merge
                         current_end = max(current_end, end)
                     else:
@@ -424,17 +452,14 @@ class SiZer:
     def plot_sizer_map(
         self,
         figsize: tuple[float, float] = (12, 8),
-        cmap: str = "RdBu_r",
         title: str | None = None,
-    ) -> "plt.Figure":
+    ) -> Figure:
         """Plot the SiZer significance map.
 
         Parameters
         ----------
         figsize : tuple
             Figure size (width, height)
-        cmap : str
-            Colormap for significance levels
         title : str, optional
             Plot title
 
@@ -443,11 +468,18 @@ class SiZer:
         matplotlib.figure.Figure
             The figure object
         """
-        if not HAS_MATPLOTLIB:
+        if not HAS_MATPLOTLIB or plt is None or mcolors is None:
             raise ImportError("matplotlib is required for plotting SiZer maps")
 
-        if self.significance_map is None:
+        if (
+            self.significance_map is None
+            or self.x_values is None
+            or self.bandwidths is None
+        ):
             raise ValueError("Must fit SiZer before plotting")
+
+        x_values = self.x_values
+        bandwidths = self.bandwidths
 
         fig, ax = plt.subplots(figsize=figsize)
 
@@ -455,7 +487,7 @@ class SiZer:
         colors = ["blue", "white", "red"]
         cmap_custom = mcolors.ListedColormap(colors)
         bounds = [-1.5, -0.5, 0.5, 1.5]
-        norm = mcolors.BoundaryNorm(bounds, cmap_custom.N)
+        boundary_norm = mcolors.BoundaryNorm(bounds, cmap_custom.N)
 
         # Plot significance map
         im = ax.imshow(
@@ -463,13 +495,13 @@ class SiZer:
             aspect="auto",
             origin="lower",
             cmap=cmap_custom,
-            norm=norm,
-            extent=[
-                self.x_values[0],
-                self.x_values[-1],
-                np.log10(self.bandwidths[0]),
-                np.log10(self.bandwidths[-1]),
-            ],
+            norm=boundary_norm,
+            extent=(
+                float(x_values[0]),
+                float(x_values[-1]),
+                float(np.log10(bandwidths[0])),
+                float(np.log10(bandwidths[-1])),
+            ),
         )
 
         # Customize axes
@@ -478,9 +510,7 @@ class SiZer:
 
         # Y-axis ticks at nice bandwidth values
         bw_ticks = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
-        bw_ticks = [
-            bw for bw in bw_ticks if self.bandwidths[0] <= bw <= self.bandwidths[-1]
-        ]
+        bw_ticks = [bw for bw in bw_ticks if bandwidths[0] <= bw <= bandwidths[-1]]
         ax.set_yticks([np.log10(bw) for bw in bw_ticks])
         ax.set_yticklabels([f"{bw:.2f}" for bw in bw_ticks])
 
@@ -545,8 +575,8 @@ def quick_sizer_plot(
     df: pd.DataFrame,
     column_value: str = "value",
     time_column: str | None = None,
-    **sizer_kwargs,
-) -> "plt.Figure":
+    **sizer_kwargs: Any,
+) -> Figure:
     """Quick SiZer analysis and plot.
 
     Parameters
@@ -624,6 +654,9 @@ def trend_with_sizer(
     try:
         sizer = sizer_analysis(df, column_value, time_column, method=sizer_method)
 
+        if sizer.bandwidths is None or sizer.significance_map is None:
+            raise ValueError("SiZer not properly fitted")
+
         # Get SiZer results at optimal bandwidth (middle of range)
         mid_bw_idx = len(sizer.bandwidths) // 2
         sizer_significance = sizer.significance_map[mid_bw_idx, :]
@@ -642,11 +675,11 @@ def trend_with_sizer(
 
         # Mark persistent regions
         if time_column:
-            x_vals = df[time_column].values
+            x_vals = np.asarray(df[time_column].values, dtype=np.float64)
         elif isinstance(df.index, pd.DatetimeIndex):
             x_vals, _ = compute_time_deltas(df.index)
         else:
-            x_vals = np.arange(len(df))
+            x_vals = np.arange(len(df), dtype=np.float64)
 
         for start, end in features["increasing"]:
             mask = (x_vals >= start) & (x_vals <= end)
