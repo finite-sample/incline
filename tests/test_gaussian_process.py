@@ -326,12 +326,6 @@ class TestEdgeCases:
 class TestFallbackBehavior:
     """Test fallback behavior when GP fails."""
 
-    def test_gp_not_available(self):
-        """Test behavior when scikit-learn is not available."""
-        # This test is mainly for documentation - actual testing would require
-        # mocking the import failure
-        pass
-
     @pytest.mark.skipif(not HAS_GP, reason="Gaussian Process methods not available")
     def test_gp_fitting_failure(self):
         """Test fallback when GP fitting fails."""
