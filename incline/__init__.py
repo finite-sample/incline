@@ -6,15 +6,20 @@ from .advanced import (
     local_polynomial_trend,
     loess_trend,
 )
-from .gaussian_process import adaptive_gp_trend, gp_trend
-from .multiscale import sizer_analysis, trend_with_sizer
+from .gaussian_process import adaptive_gp_trend, gp_trend, select_gp_kernel
+from .multiscale import quick_sizer_plot, sizer_analysis, trend_with_sizer
 from .seasonal import (
+    deseasonalize_pipeline,
     simple_deseasonalize,
     stl_decompose,
     trend_with_deseasonalization,
 )
-from .statespace import adaptive_kalman_trend, kalman_trend
-from .testing import generate_time_series, run_comprehensive_benchmark
+from .statespace import adaptive_kalman_trend, kalman_trend, select_kalman_model
+from .testing import (
+    generate_time_series,
+    get_standard_test_functions,
+    run_comprehensive_benchmark,
+)
 from .trend import (
     bootstrap_derivative_ci,
     compute_time_deltas,
@@ -36,15 +41,20 @@ __all__ = [
     "adaptive_kalman_trend",
     "bootstrap_derivative_ci",
     "compute_time_deltas",
+    "deseasonalize_pipeline",
     "estimate_trend",
     "generate_time_series",
+    "get_standard_test_functions",
     "gp_trend",
     "kalman_trend",
     "l1_trend_filter",
     "local_polynomial_trend",
     "loess_trend",
     "naive_trend",
+    "quick_sizer_plot",
     "run_comprehensive_benchmark",
+    "select_gp_kernel",
+    "select_kalman_model",
     "select_smoothing_parameter_cv",
     "sgolay_trend",
     "simple_deseasonalize",
