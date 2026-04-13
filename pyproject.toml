@@ -61,6 +61,7 @@ dev = [
     "pre-commit>=3.0",
     "jupyter",
     "matplotlib",
+    "vulture>=2.16",
 ]
 test = [
     "pytest>=7.0",

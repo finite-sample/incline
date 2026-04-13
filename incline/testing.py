@@ -13,22 +13,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-
-
-# Check for optional dependencies
-try:
-    import matplotlib.pyplot as plt
-
-    HAS_MATPLOTLIB = True
-except ImportError:
-    HAS_MATPLOTLIB = False
-
-try:
-    from scipy import stats
-
-    HAS_SCIPY_STATS = True
-except ImportError:
-    HAS_SCIPY_STATS = False
+from scipy import stats
 
 
 @dataclass
@@ -650,53 +635,6 @@ def run_comprehensive_benchmark(
                 results.append(result_dict)
 
     return pd.DataFrame(results)
-
-
-def plot_benchmark_results(
-    results_df: pd.DataFrame, metric: str = "mse_derivative"
-) -> None:
-    """Plot benchmark results."""
-    if not HAS_MATPLOTLIB:
-        return
-
-    # Aggregate results
-    agg_results = (
-        results_df.groupby(
-            ["trend_function", "noise_type", "noise_level", "n_points", "method"]
-        )[metric]
-        .agg(["mean", "std"])
-        .reset_index()
-    )
-
-    # Create plots
-    _fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    axes = axes.ravel()
-
-    # Plot 1: MSE vs noise level
-    for i, trend_func in enumerate(agg_results["trend_function"].unique()):
-        if i >= len(axes):
-            break
-
-        subset = agg_results[agg_results["trend_function"] == trend_func]
-
-        for method in subset["method"].unique():
-            method_data = subset[subset["method"] == method]
-            axes[i].errorbar(
-                method_data["noise_level"],
-                method_data["mean"],
-                yerr=method_data["std"],
-                label=method,
-                marker="o",
-            )
-
-        axes[i].set_xlabel("Noise Level")
-        axes[i].set_ylabel(metric)
-        axes[i].set_title(f"{trend_func}")
-        axes[i].legend()
-        axes[i].set_yscale("log")
-
-    plt.tight_layout()
-    plt.show()
 
 
 # Predefined test cases

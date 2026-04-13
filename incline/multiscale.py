@@ -77,7 +77,6 @@ class SiZer:
         self.confidence_level = confidence_level
         self.method = method
 
-        self.sizer_map = None
         self.significance_map = None
         self.x_values = None
         self.derivative_estimates = None

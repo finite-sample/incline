@@ -57,8 +57,6 @@ class GPTrend:
         self.n_restarts_optimizer = n_restarts_optimizer
 
         self.gp = None
-        self.X_train = None
-        self.y_train = None
 
     def _create_kernel(self, x_scale: float) -> Any:
         """Create kernel based on kernel_type."""
@@ -127,8 +125,6 @@ class GPTrend:
         )
 
         self.gp.fit(x, y)
-        self.X_train = x
-        self.y_train = y
 
         return self
 

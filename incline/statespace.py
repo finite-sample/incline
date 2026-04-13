@@ -64,9 +64,7 @@ class LocalLinearTrend:
         self.slope_variance = slope_variance
 
         self.fitted_params = None
-        self.filter_results = None
         self.smoother_results = None
-        self._kalman_filter = None
 
     def _setup_kalman_filter(self, y: npt.NDArray[np.float64]) -> Any:
         """Set up the Kalman filter for local linear trend."""
@@ -208,14 +206,8 @@ class LocalLinearTrend:
         # Bind data and run filter and smoother
         kf.bind(endog=y)
 
-        # Store the KalmanSmoother for access later
-        self._kalman_filter = kf
-
         # Run smoother (which includes filtering)
         self.smoother_results = kf.smooth()
-
-        # Filter results are accessible through smoother_results
-        self.filter_results = self.smoother_results
 
         return self
 
