@@ -418,9 +418,7 @@ def adaptive_gp_trend(
     if np.any(valid_mask):
         for arr in [smoothed_values, derivatives, ci_lower, ci_upper]:
             if np.any(~np.isnan(arr)):
-                arr[:] = (
-                    pd.Series(arr).interpolate().bfill().ffill().values
-                )
+                arr[:] = pd.Series(arr).interpolate().bfill().ffill().values
 
     # Create output dataframe
     odf = df.copy()

@@ -114,9 +114,13 @@ class SiZer:
                     df_temp["time"] = x
                     result = loess_trend(df_temp, time_column="time", frac=bandwidth)
 
-                derivatives = np.asarray(result["derivative_value"].values, dtype=np.float64)
+                derivatives = np.asarray(
+                    result["derivative_value"].values, dtype=np.float64
+                )
                 # Approximate standard errors from residuals
-                residuals = y - np.asarray(result["smoothed_value"].values, dtype=np.float64)
+                residuals = y - np.asarray(
+                    result["smoothed_value"].values, dtype=np.float64
+                )
                 residual_std = np.std(residuals)
                 std_errors = np.full(n, residual_std / np.sqrt(max(1, bandwidth * n)))
 
@@ -140,11 +144,15 @@ class SiZer:
                         df_temp, time_column="time", length_scale=bandwidth * np.ptp(x)
                     )
 
-                derivatives = np.asarray(result["derivative_value"].values, dtype=np.float64)
+                derivatives = np.asarray(
+                    result["derivative_value"].values, dtype=np.float64
+                )
                 # Use GP uncertainty
                 ci_width = result["derivative_ci_upper"] - result["derivative_ci_lower"]
                 if HAS_SCIPY_STATS and norm is not None:
-                    std_errors = np.asarray(ci_width / (2 * norm.ppf(0.975)), dtype=np.float64)
+                    std_errors = np.asarray(
+                        ci_width / (2 * norm.ppf(0.975)), dtype=np.float64
+                    )
                 else:
                     std_errors = np.asarray(ci_width / 3.92, dtype=np.float64)
 
@@ -166,9 +174,13 @@ class SiZer:
                 df_temp["time"] = x
                 result = spline_trend(df_temp, time_column="time", s=s)
 
-            derivatives = np.asarray(result["derivative_value"].values, dtype=np.float64)
+            derivatives = np.asarray(
+                result["derivative_value"].values, dtype=np.float64
+            )
             # Approximate standard errors
-            residuals = y - np.asarray(result["smoothed_value"].values, dtype=np.float64)
+            residuals = y - np.asarray(
+                result["smoothed_value"].values, dtype=np.float64
+            )
             residual_std = np.std(residuals)
             std_errors = np.full(n, residual_std * np.sqrt(bandwidth))
 
@@ -302,7 +314,9 @@ class SiZer:
     def _compute_significance_map(self, bandwidths: npt.NDArray[np.float64]) -> None:
         """Compute significance classification for each (x, bandwidth) pair."""
         if self.derivative_estimates is None or self.derivative_se is None:
-            raise ValueError("derivative_estimates and derivative_se must be set before computing significance map")
+            raise ValueError(
+                "derivative_estimates and derivative_se must be set before computing significance map"
+            )
 
         deriv_est = self.derivative_estimates
         deriv_se = self.derivative_se
@@ -394,7 +408,10 @@ class SiZer:
             raise ValueError("Must fit SiZer before finding features")
 
         x_values = self.x_values
-        features: dict[str, list[tuple[Any, Any]]] = {"increasing": [], "decreasing": []}
+        features: dict[str, list[tuple[Any, Any]]] = {
+            "increasing": [],
+            "decreasing": [],
+        }
 
         # For each x location, check if there's persistent significance
         for j in range(len(x_values)):
