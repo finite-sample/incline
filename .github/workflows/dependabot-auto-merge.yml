@@ -13,7 +13,7 @@ jobs:
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -21,26 +21,39 @@ jobs:
       # - grouped PRs report the highest bump anywhere in the group (including
       #   transitive lockfile updates), so trust our own minor-and-patch groups
       # - GitHub-Actions majors are CI-validated and low blast radius
+      # An unrecognised or empty update-type is NOT eligible, so metadata
+      # failures leave the PR open rather than merging it.
+      - name: Decide eligibility
+        id: gate
+        env:
+          ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          GROUP: ${{ steps.metadata.outputs.dependency-group }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: |
+          eligible=false
+          [ "$ECOSYSTEM" = "github_actions" ] && eligible=true
+          case "$GROUP" in *minor-and-patch*) eligible=true ;; esac
+          case "$UPDATE_TYPE" in
+            version-update:semver-minor|version-update:semver-patch) eligible=true ;;
+          esac
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+
+      # No `gh pr review --approve`: it fails outright where the repo has
+      # "Allow GitHub Actions to create and approve pull requests" off, which
+      # aborts the step before the merge ever runs. Our rulesets require status
+      # checks, not reviews, so the approval bought nothing.
       - name: Enable auto-merge for eligible updates
-        if: >-
-          steps.metadata.outputs.package-ecosystem == 'github_actions' ||
-          contains(steps.metadata.outputs.dependency-group, 'minor-and-patch') ||
-          steps.metadata.outputs.update-type != 'version-update:semver-major'
+        if: steps.gate.outputs.eligible == 'true'
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh pr review --approve "$PR_URL"
-          gh pr merge --auto --squash "$PR_URL"
+        run: gh pr merge --auto --squash "$PR_URL"
 
-      - name: Flag major updates for manual review
-        if: >-
-          steps.metadata.outputs.package-ecosystem != 'github_actions' &&
-          !contains(steps.metadata.outputs.dependency-group, 'minor-and-patch') &&
-          steps.metadata.outputs.update-type == 'version-update:semver-major'
+      - name: Flag ineligible updates for manual review
+        if: steps.gate.outputs.eligible != 'true'
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr comment "$PR_URL" --body \
-            "Major version bump — left open for manual review (auto-merge covers patch/minor only)."
+            "Left open for manual review — auto-merge covers GitHub-Actions updates, our minor-and-patch groups, and patch/minor Python bumps."
