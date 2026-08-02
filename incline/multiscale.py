@@ -3,6 +3,26 @@
 This module implements SiZer maps that show statistical significance of derivatives
 across multiple smoothing scales. This helps identify robust trend features and
 distinguish signal from noise at different resolutions.
+
+Known limitation -- SiZer standard errors
+-----------------------------------------
+Only the ``local_poly`` path derives its standard error from the same estimator
+that produced the derivative, so only it is calibrated. The ``loess`` and
+``spline`` branches reuse an ad-hoc residual-based formula that is in units of y
+rather than y per unit x and does not track the derivative's real sampling
+variability. Measured against Monte Carlo replicates on white noise
+(n=120, nominal 5% false-positive rate):
+
+- ``local_poly``: ~9-15% of points flagged significant. Usable.
+- ``loess``: standard errors 2-23x too large; ~0% flagged. Over-conservative,
+  so it misses real features at small bandwidths.
+- ``spline``: standard errors ~10x too small and *increasing* with bandwidth
+  (backwards); ~90% of points flagged significant on pure noise. Do not rely on
+  the ``spline`` significance map.
+
+Correcting the two smoother branches needs a calibrated variance for a
+nonlinear smoother, not a rearranged formula: a noise probe and a residual
+bootstrap were both tried and are off by 4-8x for the spline branch.
 """
 
 from __future__ import annotations
@@ -102,12 +122,19 @@ class SiZer:
         derivatives = np.full(n, np.nan)
         std_errors = np.full(n, np.nan)
 
+        # Decide how to hand the time axis to the underlying estimator. Test
+        # the array dtype, not ``isinstance(x[0], (int, float))``: np.int64 is
+        # not a subclass of int (unlike np.float64, which *is* a float), so an
+        # integer time column would otherwise be misrouted to the index branch
+        # and silently reinterpreted as a positional index.
+        x_is_numeric = np.issubdtype(np.asarray(x).dtype, np.number)
+
         if self.method == "loess":
             try:
                 from .advanced import loess_trend
 
                 df_temp = pd.DataFrame({"value": y})
-                if not isinstance(x[0], (int, float)):
+                if not x_is_numeric:
                     df_temp.index = x
                     result = loess_trend(df_temp, frac=bandwidth)
                 else:
@@ -117,7 +144,10 @@ class SiZer:
                 derivatives = np.asarray(
                     result["derivative_value"].values, dtype=np.float64
                 )
-                # Approximate standard errors from residuals
+                # NOTE: this standard error is not calibrated to the loess
+                # derivative's actual sampling variability (it is measurably
+                # 2-23x too large, so the map is over-conservative). See the
+                # module note on SiZer standard errors.
                 residuals = y - np.asarray(
                     result["smoothed_value"].values, dtype=np.float64
                 )
@@ -135,7 +165,7 @@ class SiZer:
                 from .gaussian_process import gp_trend
 
                 df_temp = pd.DataFrame({"value": y})
-                if not isinstance(x[0], (int, float)):
+                if not x_is_numeric:
                     df_temp.index = x
                     result = gp_trend(df_temp, length_scale=bandwidth * np.ptp(x))
                 else:
@@ -167,7 +197,7 @@ class SiZer:
             df_temp = pd.DataFrame({"value": y})
             # Map bandwidth to spline smoothing parameter
             s = float(bandwidth * n * np.var(y))
-            if not isinstance(x[0], (int, float)):
+            if not x_is_numeric:
                 df_temp.index = x
                 result = spline_trend(df_temp, s=s)
             else:
@@ -177,7 +207,12 @@ class SiZer:
             derivatives = np.asarray(
                 result["derivative_value"].values, dtype=np.float64
             )
-            # Approximate standard errors
+            # NOTE: residual_std * sqrt(bandwidth) *increases* with bandwidth,
+            # which is backwards -- more smoothing averages away more noise --
+            # and it is ~10x too small, so this branch's significance map
+            # reports ~90% of points as significantly trending on pure noise.
+            # See the module note on SiZer standard errors: correcting this
+            # needs a calibrated derivative variance, not a reshuffled formula.
             residuals = y - np.asarray(
                 result["smoothed_value"].values, dtype=np.float64
             )
@@ -218,21 +253,23 @@ class SiZer:
                 # Weighted local linear fit
                 x_local_matrix = np.column_stack([np.ones(n), x - x[i]])
                 weight_matrix = np.diag(weights)
-                beta = np.linalg.solve(
-                    x_local_matrix.T @ weight_matrix @ x_local_matrix,
-                    x_local_matrix.T @ weight_matrix @ y,
-                )
+                xtwx = x_local_matrix.T @ weight_matrix @ x_local_matrix
+                beta = np.linalg.solve(xtwx, x_local_matrix.T @ weight_matrix @ y)
 
                 derivatives[i] = beta[1]  # Slope coefficient
 
-                # Estimate standard error
+                # Estimate standard error of the slope. The weights are
+                # normalised to sum to 1, so mse * (X'WX)^-1 omits the
+                # effective-sample-size factor and overstates the standard
+                # error several-fold; the sandwich form
+                # (X'WX)^-1 (X'W^2X) (X'WX)^-1 carries it.
                 fitted = x_local_matrix @ beta
                 residuals = y - fitted
                 mse = np.sum(weights * residuals**2) / np.sum(weights)
-                var_beta = mse * np.linalg.inv(
-                    x_local_matrix.T @ weight_matrix @ x_local_matrix
-                )
-                std_errors[i] = np.sqrt(var_beta[1, 1])
+                inv_xtwx = np.linalg.inv(xtwx)
+                xtw2x = x_local_matrix.T @ np.diag(weights**2) @ x_local_matrix
+                var_beta = mse * inv_xtwx @ xtw2x @ inv_xtwx
+                std_errors[i] = np.sqrt(max(var_beta[1, 1], 0.0))
 
             except np.linalg.LinAlgError:
                 derivatives[i] = 0

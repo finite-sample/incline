@@ -273,12 +273,10 @@ def gp_trend(
     # Get time values
     if time_column:
         x = np.asarray(df[time_column], dtype=float)
-        delta = np.median(np.diff(x))
     elif isinstance(df.index, pd.DatetimeIndex):
-        x, delta = compute_time_deltas(df.index)
+        x, _ = compute_time_deltas(df.index)
     else:
         x = np.arange(len(df), dtype=float)
-        delta = 1.0
 
     # Fit GP
     try:
@@ -288,13 +286,10 @@ def gp_trend(
         # Predict function values
         y_mean, y_std = gp.predict(x, return_std=True)
 
-        # Predict derivatives
+        # Predict derivatives. predict_derivatives() differences the GP mean
+        # with respect to x itself, so the result is already a per-unit-time
+        # slope; dividing by ``delta`` again would scale it by 1/delta.
         dy_mean, dy_lower, dy_upper = gp.predict_derivatives(x, confidence_level)
-
-        # Scale derivatives by time step
-        dy_mean = dy_mean / delta
-        dy_lower = dy_lower / delta
-        dy_upper = dy_upper / delta
 
         # Create output dataframe
         odf = df.copy()

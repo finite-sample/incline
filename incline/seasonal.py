@@ -222,10 +222,10 @@ def stl_decompose(
         warnings.warn(
             f"Invalid period {period}, using simple trend estimation", stacklevel=2
         )
-        # Fall back to simple trend estimation
-        from .trend import spline_trend
-
-        return spline_trend(df, column_value, time_column)
+        # Fall back to the simple decomposition. It must still return a
+        # decomposition-shaped frame (with 'deseasonalized' etc.); returning
+        # spline_trend() here produced a frame whose callers then KeyError'd.
+        return simple_deseasonalize(df, column_value, time_column, period)
 
     # Ensure seasonal smoother is appropriate
     if seasonal % 2 == 0:
@@ -334,12 +334,21 @@ def simple_deseasonalize(
             weights[0] = weights[-1] = 0.5
             trend[i] = np.average(data_slice, weights=weights)
     else:
-        # Simple centered moving average for odd periods
-        trend = pd.Series(y).rolling(window=window, center=True).mean().values
+        # Simple centered moving average for odd periods. ``.values`` can be a
+        # read-only view (pandas 3.x), so copy before writing the edges.
+        trend = np.asarray(
+            pd.Series(y).rolling(window=window, center=True).mean().to_numpy(),
+            dtype=float,
+        ).copy()
 
-    # Fill in missing trend values at edges
-    trend[: period // 2] = trend[period // 2]
-    trend[-(period // 2) :] = trend[-(period // 2)]
+    # Fill in missing trend values at edges with the nearest computed value.
+    # The tail must read index -(period//2)-1: index -(period//2) is the first
+    # element of the still-unfilled slice being assigned, so reading it would
+    # propagate NaN across the whole tail.
+    half = period // 2
+    if half > 0:
+        trend[:half] = trend[half]
+        trend[-half:] = trend[-half - 1]
 
     # Estimate seasonal component
     detrended = y - trend

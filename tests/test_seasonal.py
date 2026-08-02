@@ -307,5 +307,54 @@ class TestEdgeCases:
         assert len(decomp_result) == len(df)
 
 
+@pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
+class TestSeasonalRegressions:
+    """Regressions for defects found by audit."""
+
+    @pytest.mark.parametrize("period", [11, 12, 13, 14, 15])
+    def test_simple_deseasonalize_handles_odd_and_even_periods(self, period):
+        """Odd periods took a rolling().values path that is read-only."""
+        df = pd.DataFrame({"value": np.arange(60, dtype=float)})
+
+        result = simple_deseasonalize(df, period=period)
+
+        assert len(result) == len(df)
+        assert "deseasonalized" in result.columns
+
+    @pytest.mark.parametrize("period", [11, 12, 13, 14])
+    def test_simple_deseasonalize_fills_the_trailing_edge(self, period):
+        """The tail fill must read the last computed value, not the NaN slice.
+
+        trend[-(period // 2)] is the first element of the slice being
+        assigned, so reading it propagated NaN across the whole tail.
+        """
+        df = pd.DataFrame({"value": np.arange(60, dtype=float)})
+
+        result = simple_deseasonalize(df, period=period)
+
+        assert not result["trend_component"].isna().any()
+        assert not result["residual_component"].isna().any()
+
+    def test_stl_invalid_period_fallback_is_decomposition_shaped(self):
+        """The invalid-period fallback must still carry 'deseasonalized'."""
+        n = 40
+        y = 10 * np.sin(2 * np.pi * np.arange(n) / 12)
+        df = pd.DataFrame({"value": y})
+
+        result = stl_decompose(df, period=n)  # period >= n // 2 -> fallback
+
+        assert "deseasonalized" in result.columns
+
+    def test_trend_with_deseasonalization_survives_invalid_period(self):
+        """Downstream indexing of 'deseasonalized' used to raise KeyError."""
+        n = 40
+        y = 10 * np.sin(2 * np.pi * np.arange(n) / 12)
+        df = pd.DataFrame({"value": y})
+
+        result = trend_with_deseasonalization(df, decomposition_method="stl", period=n)
+
+        assert len(result) == len(df)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
