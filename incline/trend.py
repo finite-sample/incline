@@ -333,10 +333,10 @@ def trending(
         # Apply weighting if specified
         weights = _compute_weights(len(derivatives), weighting)
 
-        # Compute primary statistic
-        if robust and max_or_avg == "avg":
-            max_or_avg = "trimmed_mean"
-
+        # Compute primary statistic. ("avg" is not rewritten to
+        # "trimmed_mean" here: that bypassed the robust winsorized-mean branch
+        # below, so "avg" and its documented synonym "mean" returned different
+        # numbers under robust=True and "avg" silently ignored `weighting`.)
         match max_or_avg:
             case "max":
                 trend_value = np.max(derivatives)
@@ -360,7 +360,7 @@ def trending(
                 trend_value = np.mean(derivatives)
 
         result = {
-            "id": id_val,
+            column_id: id_val,
             "trend_value": trend_value,
         }
 
@@ -388,7 +388,7 @@ def trending(
     odf = pd.DataFrame(results)
 
     if len(odf) == 0:
-        return pd.DataFrame(columns=["id", "trend_value"])
+        return pd.DataFrame(columns=[column_id, "trend_value"])
 
     # Add ranking
     odf["rank"] = rankdata(-odf["trend_value"], method="ordinal")

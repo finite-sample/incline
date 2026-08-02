@@ -372,5 +372,77 @@ class TestTrendingIntegration:
         assert list(trend_result["rank"]) == list(range(1, 11))
 
 
+class TestTrendingRegressions:
+    """Regressions for defects found by audit."""
+
+    @staticmethod
+    def _frame(values, id_column="id", id_value="a"):
+        return pd.DataFrame(
+            {
+                id_column: [id_value] * len(values),
+                "derivative_order": [1] * len(values),
+                "derivative_value": values,
+            }
+        )
+
+    def test_avg_and_mean_agree_under_robust(self):
+        """'avg' and 'mean' share a match case, so they must not diverge.
+
+        'avg' was rewritten to 'trimmed_mean' before the match, bypassing the
+        winsorized-mean branch that 'mean' still reached.
+        """
+        values = [0.0, 0.0, 10.0, 10.0, 10.0, 10.0, 10.0, 50.0, 100.0, 100.0]
+        df = self._frame(values)
+
+        avg = trending([df], max_or_avg="avg", robust=True, trim_fraction=0.2, k=10)[
+            "max_or_avg"
+        ].iloc[0]
+        mean = trending([df], max_or_avg="mean", robust=True, trim_fraction=0.2, k=10)[
+            "max_or_avg"
+        ].iloc[0]
+
+        assert avg == pytest.approx(mean)
+
+    def test_robust_avg_honours_the_weighting_scheme(self):
+        """The winsorized branch weights its average; trimmed_mean cannot."""
+        values = [0.0, 0.0, 10.0, 10.0, 10.0, 10.0, 10.0, 50.0, 100.0, 100.0]
+        df = self._frame(values)
+
+        results = {
+            weighting: float(
+                trending(
+                    [df],
+                    max_or_avg="avg",
+                    robust=True,
+                    trim_fraction=0.2,
+                    weighting=weighting,
+                    k=10,
+                )["max_or_avg"].iloc[0]
+            )
+            for weighting in ("uniform", "linear", "exponential")
+        }
+
+        assert len(set(results.values())) > 1, results
+
+    def test_output_uses_the_requested_id_column(self):
+        """column_id drives the grouping, so it must name the output column."""
+        df = self._frame([1.0, 2.0, 3.0], id_column="ticker", id_value="AAA")
+
+        result = trending([df], column_id="ticker", k=3)
+
+        assert "ticker" in result.columns
+        assert result["ticker"].iloc[0] == "AAA"
+
+    def test_empty_and_populated_paths_agree_on_the_id_column(self):
+        """Both return paths must label the identifier column the same way."""
+        df = self._frame([1.0, 2.0, 3.0], id_column="ticker", id_value="AAA")
+
+        populated = trending([df], column_id="ticker", k=3)
+        empty = trending([df], column_id="ticker", derivative_order=99, k=3)
+
+        assert "ticker" in populated.columns
+        assert "ticker" in empty.columns
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

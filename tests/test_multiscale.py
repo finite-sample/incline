@@ -417,5 +417,78 @@ class TestEdgeCases:
                 sizer.plot_sizer_map()
 
 
+@pytest.mark.skipif(not HAS_MULTISCALE, reason="Multiscale methods not available")
+class TestSiZerRegressions:
+    """Regressions for defects found by audit."""
+
+    @pytest.mark.parametrize("method", ["loess", "spline"])
+    def test_integer_time_column_is_not_treated_as_positional(self, method):
+        """np.int64 is not a subclass of int, so a dtype test must be used.
+
+        With a time column stepping by 10, y = 2t has slope 2.0. Falling back
+        to the positional index reports 20.0 instead.
+        """
+        t = np.arange(0, 400, 10)
+        assert t.dtype.kind == "i"
+
+        sizer = SiZer(method=method, n_bandwidths=4)
+        sizer.fit(pd.DataFrame({"time": t, "value": 2.0 * t}), "value", "time")
+
+        assert np.nanmedian(sizer.derivative_estimates) == pytest.approx(2.0, abs=1e-3)
+
+    @pytest.mark.parametrize("method", ["loess", "spline"])
+    def test_derivatives_agree_between_int_and_float_time(self, method):
+        """The reported slope must not depend on the time column's dtype."""
+        t = np.arange(0, 400, 10)
+        y = 2.0 * t
+
+        def median_slope(time_values):
+            sizer = SiZer(method=method, n_bandwidths=4)
+            sizer.fit(pd.DataFrame({"time": time_values, "value": y}), "value", "time")
+            return np.nanmedian(sizer.derivative_estimates)
+
+        assert median_slope(t) == pytest.approx(median_slope(t.astype(float)), rel=1e-6)
+
+    def test_local_polynomial_standard_errors_track_sampling_variability(self):
+        """The local-linear slope SE must match the estimator's real spread.
+
+        Normalised weights make mse * (X'WX)^-1 omit the effective sample
+        size, overstating the standard error several-fold.
+        """
+        n, bandwidth = 120, 0.126
+        x = np.arange(n, dtype=float)
+        sizer = SiZer(method="local_poly")
+
+        replicates = [
+            sizer._local_polynomial_derivatives(
+                x, np.random.default_rng(seed).normal(0, 1, n), bandwidth
+            )[0]
+            for seed in range(40)
+        ]
+        true_sd = float(np.std(np.array(replicates), axis=0).mean())
+
+        _, reported = sizer._local_polynomial_derivatives(
+            x, np.random.default_rng(0).normal(0, 1, n), bandwidth
+        )
+        ratio = float(np.median(reported)) / true_sd
+
+        assert 0.5 < ratio < 2.0, f"standard error off by {ratio:.1f}x"
+
+    def test_local_poly_significance_map_is_not_wildly_anticonservative(self):
+        """On pure noise the map must not flag most points as trending."""
+        n = 120
+        t = np.arange(n, dtype=float)
+        rates = []
+        for seed in range(8):
+            y = np.random.default_rng(500 + seed).normal(0, 1, n)
+            sizer = SiZer(
+                method="local_poly", n_bandwidths=4, bandwidth_range=(0.05, 0.5)
+            )
+            sizer.fit(pd.DataFrame({"time": t, "value": y}), "value", "time")
+            rates.append(np.mean(sizer.significance_map != 0) * 100)
+
+        assert np.mean(rates) < 25.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

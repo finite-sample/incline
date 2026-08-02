@@ -111,8 +111,14 @@ class LocalLinearTrend:
             # Bind data and run filter (smoother has filter method)
             kf.bind(endog=y)
             results = kf.filter()
-            return -results.loglikelihood_burn  # Return negative for minimization
-        except np.linalg.LinAlgError:
+            # Sum the per-observation log-likelihood contributions. (Note:
+            # ``loglikelihood_burn`` is the *count* of burned observations, not
+            # a likelihood, and is 0 under approximate diffuse initialization.)
+            llf = float(np.nansum(results.llf_obs))
+            if not np.isfinite(llf):
+                return np.inf
+            return -llf  # Return negative for minimization
+        except (np.linalg.LinAlgError, ValueError):
             return np.inf
 
     def fit(self, y: npt.NDArray[np.float64]) -> "LocalLinearTrend":
@@ -167,6 +173,7 @@ class LocalLinearTrend:
 
             # Optimize
             try:
+                initial_obj = self._log_likelihood(initial_params, y)
                 result = minimize(
                     self._log_likelihood,
                     initial_params,
@@ -175,7 +182,11 @@ class LocalLinearTrend:
                     options={"disp": False},
                 )
 
-                if result.success:
+                # BFGS routinely reports success=False with "precision loss"
+                # on a flat likelihood while still having found a much better
+                # point. Keep whichever point actually has the lower objective
+                # rather than discarding a converged fit.
+                if np.isfinite(result.fun) and result.fun <= initial_obj:
                     params = result.x
                 else:
                     warnings.warn(
@@ -337,9 +348,14 @@ class StructuralTrendModel:
 
         from statsmodels.tsa.statespace.structural import UnobservedComponents
 
-        # Configure model components
+        # statsmodels' UnobservedComponents has no damped-trend specification
+        # (it offers ``damped_cycle`` only). Refuse rather than silently
+        # ignoring a parameter documented as changing the model.
         if self.damped_trend:
-            pass
+            raise NotImplementedError(
+                "damped_trend is not supported: statsmodels' UnobservedComponents "
+                "does not provide a damped trend specification."
+            )
 
         seasonal = None
         if self.seasonal_periods:
@@ -364,11 +380,31 @@ class StructuralTrendModel:
         if self.fitted_model is None:
             raise ValueError("Model must be fitted first")
 
+        res = self.fitted_model
+        level = np.asarray(res.level.smoothed, dtype=float)
+        trend = np.asarray(res.trend.smoothed, dtype=float)
+
+        seasonal_component = getattr(res, "seasonal", None)
+        seasonal = (
+            None
+            if seasonal_component is None
+            else np.asarray(seasonal_component.smoothed, dtype=float)
+        )
+
+        # UnobservedComponentsResults exposes no ``irregular`` attribute. The
+        # irregular component is whatever the observation equation
+        # (y = level + seasonal + irregular) leaves over once the modelled
+        # signal is removed. The trend state is the slope and does not enter
+        # the observation equation.
+        endog = np.asarray(res.model.endog, dtype=float).ravel()
+        signal = level if seasonal is None else level + seasonal
+        irregular = endog - signal
+
         return {
-            "level": self.fitted_model.level.smoothed,
-            "trend": self.fitted_model.trend.smoothed,
-            "seasonal": getattr(self.fitted_model, "seasonal", None),
-            "irregular": self.fitted_model.irregular.smoothed,
+            "level": level,
+            "trend": trend,
+            "seasonal": seasonal,
+            "irregular": irregular,
         }
 
 
@@ -391,7 +427,8 @@ def kalman_trend(
     time_column : str, optional
         Time column name
     model_type : str
-        Type of state-space model ('local_linear', 'structural')
+        Type of state-space model ('local_linear', 'structural',
+        'adaptive_kalman'). Accepts every value select_kalman_model() returns.
     confidence_level : float
         Confidence level for intervals
     **model_kwargs
@@ -453,11 +490,12 @@ def kalman_trend(
 
         components = model.get_components()
 
-        # Estimate derivative from trend component
+        # In a local-linear structural model the trend state *is* the slope
+        # (per observation step); differencing it again would give the
+        # acceleration. Only rescale it to per-unit-time.
         trend_component = components["trend"]
         if trend_component is not None:
-            # Finite difference approximation
-            slope = np.gradient(trend_component) / delta
+            slope = np.asarray(trend_component, dtype=float) / delta
         else:
             slope = np.zeros(len(y))
 
@@ -472,6 +510,12 @@ def kalman_trend(
         for comp_name, comp_values in components.items():
             if comp_values is not None:
                 odf[f"{comp_name}_component"] = comp_values
+
+    elif model_type == "adaptive_kalman":
+        # select_kalman_model() can recommend this; dispatch rather than reject.
+        return adaptive_kalman_trend(
+            df, column_value=column_value, time_column=time_column, **model_kwargs
+        )
 
     else:
         raise ValueError(f"Unknown model type: {model_type}")

@@ -346,5 +346,24 @@ class TestFallbackBehavior:
             )
 
 
+@pytest.mark.skipif(not HAS_GP, reason="Gaussian Process methods not available")
+class TestGPTrendScaling:
+    """Regressions for defects found by audit."""
+
+    @pytest.mark.parametrize("step", [1.0, 0.5, 0.25, 2.0])
+    def test_gp_trend_slope_is_spacing_invariant(self, step):
+        """On y = 2t the slope is 2.0 per unit t whatever the sampling step.
+
+        predict_derivatives() already differences with respect to x, so
+        gp_trend must not divide by the time step a second time.
+        """
+        t = np.arange(50) * step
+        df = pd.DataFrame({"time": t, "value": 2.0 * t})
+
+        result = gp_trend(df, column_value="value", time_column="time")
+
+        assert np.median(result["derivative_value"]) == pytest.approx(2.0, abs=1e-3)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

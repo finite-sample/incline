@@ -358,5 +358,77 @@ class TestEdgeCases:
             pytest.skip("Required dependencies not available")
 
 
+@pytest.mark.skipif(not HAS_STATESPACE, reason="State-space methods not available")
+class TestStateSpaceRegressions:
+    """Regressions for defects found by audit."""
+
+    def test_log_likelihood_objective_varies_with_parameters(self):
+        """The MLE objective must depend on the parameters it is optimising."""
+        y = 2.0 * np.arange(60) + np.random.default_rng(0).normal(0, 1.0, 60)
+        model = LocalLinearTrend()
+
+        objectives = [
+            model._log_likelihood(np.log(np.array(p, dtype=float)), y)
+            for p in ([1.0, 1.0, 1.0], [100.0, 1.0, 0.01], [0.5, 50.0, 3.0])
+        ]
+
+        # Previously the objective returned loglikelihood_burn, an integer
+        # burn-in count that is always 0, so every parameter vector scored 0.
+        assert len({round(o, 6) for o in objectives}) == len(objectives)
+        assert all(np.isfinite(o) for o in objectives)
+
+    def test_fitted_variances_are_not_the_initial_guess(self):
+        """Fitted variances must reflect the data, not the fixed 10:1:0.1 seed."""
+        y = 2.0 * np.arange(60) + np.random.default_rng(0).normal(0, 1.0, 60)
+        model = LocalLinearTrend().fit(y)
+
+        y_var = float(np.nanvar(y))
+        initial_guess = [y_var * 0.1, y_var * 0.01, y_var * 0.001]
+        fitted = [
+            model.fitted_params["obs_variance"],
+            model.fitted_params["level_variance"],
+            model.fitted_params["slope_variance"],
+        ]
+
+        assert not np.allclose(fitted, initial_guess)
+
+    def test_structural_get_components_returns_arrays(self):
+        """UnobservedComponentsResults has no .irregular; it must be derived."""
+        y = 2.0 * np.arange(60) + np.random.default_rng(1).normal(0, 0.1, 60)
+        components = StructuralTrendModel().fit(y).get_components()
+
+        assert set(components) == {"level", "trend", "seasonal", "irregular"}
+        assert np.all(np.isfinite(components["irregular"]))
+        assert len(components["irregular"]) == len(y)
+
+    def test_structural_derivative_is_the_slope_not_its_gradient(self):
+        """On y = 2t the structural derivative is 2.0, not d(slope)/dt = 0."""
+        t = np.arange(60, dtype=float)
+        result = kalman_trend(pd.DataFrame({"value": 2.0 * t}), model_type="structural")
+
+        assert np.median(result["derivative_value"]) == pytest.approx(2.0, abs=1e-6)
+
+    def test_damped_trend_is_not_silently_ignored(self):
+        """damped_trend is documented as changing the model, so it must not no-op."""
+        with pytest.raises(NotImplementedError):
+            StructuralTrendModel(damped_trend=True).fit(np.arange(50, dtype=float))
+
+    def test_kalman_trend_accepts_every_selected_model(self):
+        """select_kalman_model's recommendation must be usable by kalman_trend."""
+        y = np.concatenate(
+            [
+                np.random.default_rng(7).normal(0, 0.2, 60),
+                np.random.default_rng(8).normal(0, 5.0, 60),
+            ]
+        )
+        df = pd.DataFrame({"value": y})
+
+        model_type = select_kalman_model(df)
+        assert model_type == "adaptive_kalman"  # the case that used to raise
+
+        result = kalman_trend(df, model_type=model_type)
+        assert len(result) == len(df)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
