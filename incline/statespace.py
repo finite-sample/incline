@@ -514,7 +514,11 @@ def kalman_trend(
     elif model_type == "adaptive_kalman":
         # select_kalman_model() can recommend this; dispatch rather than reject.
         return adaptive_kalman_trend(
-            df, column_value=column_value, time_column=time_column, **model_kwargs
+            df,
+            column_value=column_value,
+            time_column=time_column,
+            confidence_level=confidence_level,
+            **model_kwargs,
         )
 
     else:

@@ -429,6 +429,33 @@ class TestStateSpaceRegressions:
         result = kalman_trend(df, model_type=model_type)
         assert len(result) == len(df)
 
+    def test_adaptive_kalman_forwards_confidence_level(self):
+        """The adaptive dispatch path must not reset intervals to the default."""
+        y = 2.0 * np.arange(80) + np.random.default_rng(9).normal(0, 1.0, 80)
+        df = pd.DataFrame({"value": y})
+
+        narrow = kalman_trend(
+            df,
+            model_type="adaptive_kalman",
+            confidence_level=0.5,
+            adaptation_window=20,
+        )
+        wide = kalman_trend(
+            df,
+            model_type="adaptive_kalman",
+            confidence_level=0.99,
+            adaptation_window=20,
+        )
+
+        narrow_width = (
+            narrow["derivative_ci_upper"] - narrow["derivative_ci_lower"]
+        ).dropna()
+        wide_width = (
+            wide["derivative_ci_upper"] - wide["derivative_ci_lower"]
+        ).dropna()
+
+        assert np.median(wide_width) > np.median(narrow_width)
+
 
 if __name__ == "__main__":
     pytest.main([__file__])
