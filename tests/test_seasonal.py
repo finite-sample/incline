@@ -1,360 +1,242 @@
-"""Tests for incline.seasonal module."""
+"""Tests for seasonal decomposition.
+
+The schema tests carry the most weight. The previous implementation returned
+``derivative_value`` from one code path and ``trend_derivative_value`` from
+another, so what a caller had to index depended on whether seasonality happened
+to be detected. Several tests below exist purely to pin that down.
+"""
+
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from incline.seasonal import (
+    DECOMPOSITION_COLUMNS,
+    Seasonality,
+    deseasonalize,
+    detect_seasonality,
+    moving_average_decompose,
+    stl_decompose,
+    trend_with_deseasonalization,
+)
+from incline.smoothers import PenalizedSpline, SavitzkyGolay
 
-try:
-    from incline.seasonal import (
-        deseasonalize_pipeline,
-        detect_seasonality,
-        simple_deseasonalize,
-        stl_decompose,
-        trend_with_deseasonalization,
+
+N = 200
+
+
+def seasonal_series(period: int = 12, seed: int = 0) -> pd.DataFrame:
+    """A trending series with a clear cycle."""
+    t = np.arange(N, dtype=float)
+    rng = np.random.default_rng(seed)
+    values = 0.05 * t + 3 * np.sin(2 * np.pi * t / period) + rng.normal(0, 0.4, N)
+    return pd.DataFrame({"value": values}, index=pd.date_range("2020-01-01", periods=N))
+
+
+def plain_series(seed: int = 1) -> pd.DataFrame:
+    """A trending series with no cycle."""
+    t = np.arange(N, dtype=float)
+    values = 0.05 * t + np.random.default_rng(seed).normal(0, 0.4, N)
+    return pd.DataFrame({"value": values}, index=pd.date_range("2020-01-01", periods=N))
+
+
+def test_detects_a_planted_cycle():
+    """A 12-point cycle should be found at 12."""
+    found = detect_seasonality(seasonal_series(period=12))
+    assert isinstance(found, Seasonality)
+    assert found.seasonal
+    assert found.period == 12
+    assert 0 < found.strength <= 1
+
+
+def test_reports_no_cycle_when_there_is_none():
+    """A trend without a cycle must not manufacture one."""
+    assert detect_seasonality(plain_series()).seasonal is False
+
+
+def test_detection_survives_a_series_too_short_to_analyse():
+    """Five points cannot support any detector."""
+    tiny = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    assert detect_seasonality(tiny).seasonal is False
+
+
+@pytest.mark.parametrize(
+    ("label", "decompose"),
+    [
+        ("auto_with_cycle", lambda: deseasonalize(seasonal_series())),
+        ("auto_without_cycle", lambda: deseasonalize(plain_series())),
+        ("explicit_stl", lambda: deseasonalize(seasonal_series(), method="stl")),
+        ("explicit_simple", lambda: deseasonalize(seasonal_series(), method="simple")),
+        ("odd_period", lambda: moving_average_decompose(seasonal_series(), period=7)),
+        ("even_period", lambda: moving_average_decompose(seasonal_series(), period=12)),
+        ("unusable_period", lambda: stl_decompose(seasonal_series(), period=999)),
+    ],
+)
+def test_every_route_returns_the_same_schema(label, decompose):
+    """One schema, whichever path ran.
+
+    This is the regression that motivated the rewrite: callers had to know
+    which branch fired before they knew what to index.
+    """
+    del label
+    result = decompose()
+    for column in DECOMPOSITION_COLUMNS:
+        assert column in result.columns, f"missing {column}"
+    assert result["deseasonalized"].notna().all()
+    assert len(result) == N
+
+
+def test_components_reconstruct_the_observed_series():
+    """trend + seasonal + residual must add back up."""
+    result = deseasonalize(seasonal_series())
+    total = (
+        result["trend_component"]
+        + result["seasonal_component"]
+        + result["residual_component"]
+    )
+    np.testing.assert_allclose(total, result["value"], atol=1e-8)
+
+
+def test_deseasonalizing_removes_the_cycle():
+    """The seasonal swing should be gone from the adjusted series."""
+    data = seasonal_series(period=12)
+    result = deseasonalize(data, method="stl")
+
+    # Compare the amplitude at the seasonal frequency, not the total spread,
+    # since the trend dominates the variance either way.
+    def cycle_amplitude(values):
+        t = np.arange(len(values))
+        wave = np.exp(-2j * np.pi * t / 12)
+        return float(np.abs(np.sum((values - np.mean(values)) * wave)) / len(values))
+
+    assert cycle_amplitude(result["deseasonalized"]) < 0.3 * cycle_amplitude(
+        data["value"]
     )
 
-    HAS_SEASONAL = True
-except ImportError:
-    HAS_SEASONAL = False
-
-
-@pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-class TestSeasonalityDetection:
-    """Test cases for seasonality detection."""
-
-    def test_detect_seasonality_synthetic(self):
-        """Test seasonality detection with synthetic data."""
-        # Create seasonal data
-        t = np.arange(100)
-        seasonal = 2 * np.sin(2 * np.pi * t / 12)  # Period 12
-        trend = 0.1 * t
-        noise = 0.1 * np.random.randn(100)
-        y = trend + seasonal + noise
-
-        df = pd.DataFrame({"value": y})
-        result = detect_seasonality(df, max_period=50)
-
-        assert isinstance(result, dict)
-        assert "seasonal" in result
-        assert "period" in result
-        assert "strength" in result
-        assert "method" in result
-
-        # Should detect seasonality
-        if result["seasonal"]:
-            assert result["period"] is not None
-            assert result["strength"] > 0
-
-    def test_detect_seasonality_no_pattern(self):
-        """Test seasonality detection with random data."""
-        # Pure random data
-        y = np.random.randn(100)
-        df = pd.DataFrame({"value": y})
-
-        result = detect_seasonality(df)
-
-        assert isinstance(result, dict)
-        assert "seasonal" in result
-
-        # Should not detect strong seasonality in random data
-        if not result["seasonal"]:
-            assert result["period"] is None
-            assert result["strength"] == 0.0
-
-    def test_detect_seasonality_parameters(self):
-        """Test seasonality detection with different parameters."""
-        # Create data with known period
-        t = np.arange(60)
-        y = np.sin(2 * np.pi * t / 10) + 0.1 * np.random.randn(60)
-        df = pd.DataFrame({"value": y})
-
-        # Test with different max_period
-        result1 = detect_seasonality(df, max_period=5)
-        result2 = detect_seasonality(df, max_period=20)
-
-        assert isinstance(result1, dict)
-        assert isinstance(result2, dict)
-
-
-@pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-class TestSTLDecompose:
-    """Test cases for STL decomposition."""
-
-    def test_stl_decompose_basic(self):
-        """Test basic STL decomposition."""
-        # Create seasonal time series
-        dates = pd.date_range("2020-01-01", periods=120, freq="D")
-        t = np.arange(120)
-        seasonal = 2 * np.sin(2 * np.pi * t / 30)  # Monthly pattern
-        trend = 0.05 * t
-        noise = 0.2 * np.random.randn(120)
-        y = trend + seasonal + noise
-
-        df = pd.DataFrame({"value": y}, index=dates)
-        result = stl_decompose(df, period=30)
-
-        assert "trend_component" in result.columns
-        assert "seasonal_component" in result.columns
-        assert "residual_component" in result.columns
-        assert "deseasonalized" in result.columns
-        assert "decomposition_method" in result.columns
-        assert result["decomposition_method"].iloc[0] == "stl"
-        assert len(result) == len(df)
-
-    def test_stl_decompose_auto_period(self):
-        """Test STL with automatic period detection."""
-        # Create data with clear seasonal pattern
-        t = np.arange(100)
-        y = np.sin(2 * np.pi * t / 12) + 0.1 * t + 0.1 * np.random.randn(100)
-        df = pd.DataFrame({"value": y})
-
-        # Should work without specifying period
-        result = stl_decompose(df)
-        assert len(result) == len(df)
-        assert "period" in result.columns
-
-    def test_stl_decompose_parameters(self):
-        """Test STL with different parameters."""
-        t = np.arange(80)
-        y = np.sin(2 * np.pi * t / 20) + 0.1 * np.random.randn(80)
-        df = pd.DataFrame({"value": y})
-
-        # Test with different parameters
-        result1 = stl_decompose(df, period=20, seasonal=7, robust=True)
-        result2 = stl_decompose(df, period=20, seasonal=11, robust=False)
-
-        assert len(result1) == len(df)
-        assert len(result2) == len(df)
-
-
-@pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-class TestSimpleDeseasonalize:
-    """Test cases for simple deseasonalization."""
-
-    def test_simple_deseasonalize_basic(self):
-        """Test basic simple deseasonalization."""
-        # Create seasonal data
-        t = np.arange(60)
-        seasonal = np.sin(2 * np.pi * t / 12)
-        trend = 0.1 * t
-        y = trend + seasonal + 0.1 * np.random.randn(60)
-
-        df = pd.DataFrame({"value": y})
-        result = simple_deseasonalize(df, period=12)
-
-        assert "trend_component" in result.columns
-        assert "seasonal_component" in result.columns
-        assert "residual_component" in result.columns
-        assert "deseasonalized" in result.columns
-        assert "decomposition_method" in result.columns
-        assert result["decomposition_method"].iloc[0] == "simple"
-        assert len(result) == len(df)
-
-    def test_simple_deseasonalize_no_seasonality(self):
-        """Test simple deseasonalization with no clear seasonality."""
-        # Random data
-        y = np.random.randn(50)
-        df = pd.DataFrame({"value": y})
-
-        result = simple_deseasonalize(df)
-        assert len(result) == len(df)
-        assert "deseasonalized" in result.columns
-
-    def test_simple_deseasonalize_edge_cases(self):
-        """Test simple deseasonalization edge cases."""
-        # Very short series
-        short_df = pd.DataFrame({"value": [1, 2, 3, 4, 5]})
-        result = simple_deseasonalize(short_df, period=10)  # Period larger than data
-        assert len(result) == len(short_df)
-
-        # Period too large
-        df = pd.DataFrame({"value": np.random.randn(20)})
-        result = simple_deseasonalize(df, period=30)
-        assert len(result) == len(df)
-
-
-@pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-class TestTrendWithDeseasonalization:
-    """Test cases for trend estimation with deseasonalization."""
-
-    def test_trend_with_deseasonalization_basic(self):
-        """Test basic trend estimation with deseasonalization."""
-        # Create seasonal data
-        t = np.arange(100)
-        seasonal = 2 * np.sin(2 * np.pi * t / 20)
-        trend = 0.05 * t + 0.001 * t**2  # Quadratic trend
-        noise = 0.2 * np.random.randn(100)
-        y = trend + seasonal + noise
-
-        df = pd.DataFrame({"value": y})
-        result = trend_with_deseasonalization(df, trend_method="spline")
-
-        assert (
-            "trend_smoothed_value" in result.columns
-            or "smoothed_value" in result.columns
-        )
-        assert "seasonality_detected" in result.columns
-        assert "seasonality_strength" in result.columns
-        assert len(result) == len(df)
-
-    def test_trend_with_deseasonalization_no_seasonality(self):
-        """Test with data that has no seasonality."""
-        # Non-seasonal data
-        t = np.arange(50)
-        y = 0.1 * t + 0.1 * np.random.randn(50)
-        df = pd.DataFrame({"value": y})
-
-        result = trend_with_deseasonalization(df, trend_method="spline")
-        assert len(result) == len(df)
-        assert "seasonality_detected" in result.columns
-
-    def test_trend_with_deseasonalization_methods(self):
-        """Test different trend methods."""
-        t = np.arange(60)
-        y = np.sin(2 * np.pi * t / 15) + 0.05 * t + 0.1 * np.random.randn(60)
-        df = pd.DataFrame({"value": y})
-
-        # Test different trend methods
-        for method in ["spline", "sgolay"]:
-            result = trend_with_deseasonalization(df, trend_method=method)
-            assert len(result) == len(df)
-
-        # Test different decomposition methods
-        result1 = trend_with_deseasonalization(df, decomposition_method="simple")
-        result2 = trend_with_deseasonalization(df, decomposition_method="auto")
-
-        assert len(result1) == len(df)
-        assert len(result2) == len(df)
-
-
-class TestDeseasonalizePipeline:
-    """Test cases for deseasonalization pipeline."""
-
-    @pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-    def test_deseasonalize_pipeline_basic(self):
-        """Test basic pipeline functionality."""
-        t = np.arange(50)
-        y = np.sin(2 * np.pi * t / 12) + 0.1 * np.random.randn(50)
-        df = pd.DataFrame({"value": y})
-
-        # Test pipeline creation and usage
-        pipeline = deseasonalize_pipeline("simple", period=12)
-        result = pipeline(df)
-
-        assert len(result) == len(df)
-        assert "deseasonalized" in result.columns
-
-    @pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-    def test_deseasonalize_pipeline_auto(self):
-        """Test pipeline with auto method selection."""
-        df = pd.DataFrame({"value": np.random.randn(40)})
-
-        pipeline = deseasonalize_pipeline("auto")
-        result = pipeline(df)
-        assert len(result) == len(df)
-
-
-class TestEdgeCases:
-    """Test edge cases for seasonal methods."""
-
-    @pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-    def test_constant_data(self):
-        """Test with constant data."""
-        df = pd.DataFrame({"value": np.ones(50)})
-
-        result = detect_seasonality(df)
-        assert not result["seasonal"]  # No seasonality in constant data
-
-        decomp_result = simple_deseasonalize(df)
-        assert len(decomp_result) == len(df)
-
-    @pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-    def test_linear_trend_only(self):
-        """Test with pure linear trend."""
-        t = np.arange(50)
-        y = 2 * t + 1  # Pure linear trend
-        df = pd.DataFrame({"value": y})
-
-        detect_seasonality(df)
-        # May or may not detect seasonality in linear trend
-
-        decomp_result = simple_deseasonalize(df)
-        assert len(decomp_result) == len(df)
-
-    @pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-    def test_missing_values(self):
-        """Test handling of missing values."""
-        t = np.arange(60)
-        y = np.sin(2 * np.pi * t / 12) + 0.1 * t
-        y[10:15] = np.nan  # Introduce missing values
-
-        df = pd.DataFrame({"value": y})
-
-        # Should handle missing values gracefully
-        result = simple_deseasonalize(df, period=12)
-        assert len(result) == len(df)
-
-    @pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-    def test_very_short_series(self):
-        """Test with very short time series."""
-        df = pd.DataFrame({"value": [1, 2, 3]})
-
-        result = detect_seasonality(df)
-        assert not result["seasonal"]  # Too short for seasonality
-
-        decomp_result = simple_deseasonalize(df)
-        assert len(decomp_result) == len(df)
-
-
-@pytest.mark.skipif(not HAS_SEASONAL, reason="Seasonal methods not available")
-class TestSeasonalRegressions:
-    """Regressions for defects found by audit."""
-
-    @pytest.mark.parametrize("period", [11, 12, 13, 14, 15])
-    def test_simple_deseasonalize_handles_odd_and_even_periods(self, period):
-        """Odd periods took a rolling().values path that is read-only."""
-        df = pd.DataFrame({"value": np.arange(60, dtype=float)})
-
-        result = simple_deseasonalize(df, period=period)
-
-        assert len(result) == len(df)
-        assert "deseasonalized" in result.columns
-
-    @pytest.mark.parametrize("period", [11, 12, 13, 14])
-    def test_simple_deseasonalize_fills_the_trailing_edge(self, period):
-        """The tail fill must read the last computed value, not the NaN slice.
-
-        trend[-(period // 2)] is the first element of the slice being
-        assigned, so reading it propagated NaN across the whole tail.
-        """
-        df = pd.DataFrame({"value": np.arange(60, dtype=float)})
-
-        result = simple_deseasonalize(df, period=period)
-
-        assert not result["trend_component"].isna().any()
-        assert not result["residual_component"].isna().any()
-
-    def test_stl_invalid_period_fallback_is_decomposition_shaped(self):
-        """The invalid-period fallback must still carry 'deseasonalized'."""
-        n = 40
-        y = 10 * np.sin(2 * np.pi * np.arange(n) / 12)
-        df = pd.DataFrame({"value": y})
-
-        result = stl_decompose(df, period=n)  # period >= n // 2 -> fallback
-
-        assert "deseasonalized" in result.columns
-
-    def test_trend_with_deseasonalization_survives_invalid_period(self):
-        """Downstream indexing of 'deseasonalized' used to raise KeyError."""
-        n = 40
-        y = 10 * np.sin(2 * np.pi * np.arange(n) / 12)
-        df = pd.DataFrame({"value": y})
-
-        result = trend_with_deseasonalization(df, decomposition_method="stl", period=n)
-
-        assert len(result) == len(df)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])
+
+def test_no_cycle_leaves_the_series_untouched():
+    """With nothing to remove, the adjusted series is the original."""
+    data = plain_series()
+    result = deseasonalize(data)
+    assert result["decomposition_method"].iloc[0] == "none"
+    np.testing.assert_allclose(result["deseasonalized"], data["value"])
+
+
+def test_unknown_method_is_refused():
+    """A typo must not silently pick a default."""
+    with pytest.raises(ValueError, match="Unknown decomposition method"):
+        deseasonalize(seasonal_series(), method="magic")
+
+
+@pytest.mark.parametrize("period", [7, 12])
+def test_moving_average_handles_odd_and_even_periods(period):
+    """Regression: the odd-period path wrote into a read-only rolling view."""
+    result = moving_average_decompose(seasonal_series(), period=period)
+    assert result["trend_component"].notna().all()
+    assert result["deseasonalized"].notna().all()
+
+
+@pytest.mark.parametrize("period", [7, 12])
+def test_moving_average_fills_the_trailing_edge(period):
+    """Regression: the tail fill must read the last computed value.
+
+    Index ``-half`` is the first element of the slice being assigned, so
+    reading it propagated NaN across the entire tail.
+    """
+    trend = moving_average_decompose(seasonal_series(), period=period)[
+        "trend_component"
+    ]
+    assert trend.notna().all()
+    assert np.isfinite(trend.iloc[-1])
+    assert np.isfinite(trend.iloc[0])
+
+
+def test_unusable_period_falls_back_to_a_decomposition_shape():
+    """Regression: the fallback must still carry 'deseasonalized'.
+
+    It once returned a trend-estimate frame instead, and every caller that
+    indexed the decomposition columns raised KeyError.
+    """
+    with pytest.warns(UserWarning, match="unusable"):
+        result = stl_decompose(seasonal_series(), period=999)
+    assert "deseasonalized" in result.columns
+    assert result["deseasonalized"].notna().all()
+
+
+def test_trend_with_deseasonalization_survives_an_unusable_period():
+    """Regression: downstream indexing of 'deseasonalized' used to raise."""
+    with pytest.warns(UserWarning, match="unusable"):
+        result = trend_with_deseasonalization(seasonal_series(), period=999)
+    assert "derivative_value" in result.columns
+    assert result["derivative_value"].notna().sum() > N // 2
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(seasonal_series(), id="cyclic"),
+        pytest.param(plain_series(), id="flat"),
+    ],
+)
+def test_trend_with_deseasonalization_has_one_schema(data):
+    """Both paths emit derivative_value, never trend_derivative_value."""
+    result = trend_with_deseasonalization(data, SavitzkyGolay(window_length=21))
+    assert "derivative_value" in result.columns
+    assert "trend_derivative_value" not in result.columns
+    for column in DECOMPOSITION_COLUMNS:
+        assert column in result.columns
+
+
+def test_trend_with_deseasonalization_forwards_uncertainty_options():
+    """The wrapper must pass se= through rather than swallowing it."""
+    result = trend_with_deseasonalization(
+        seasonal_series(),
+        SavitzkyGolay(window_length=21),
+        se=True,
+        n_bootstrap=30,
+        random_state=1,
+    )
+    assert result["derivative_se"].notna().any()
+
+
+def test_uncertainty_accounts_for_the_seasonal_fit_by_default():
+    """Asking for a standard error must not hand back a knowingly narrow one.
+
+    The seasonal component was estimated from the same data, so an interval
+    conditional on it covers 0.917 against a nominal 0.95. The wrapper
+    bootstraps the whole pipeline instead, which is why se_method says so.
+    """
+    result = trend_with_deseasonalization(
+        seasonal_series(),
+        SavitzkyGolay(window_length=21),
+        se=True,
+        n_bootstrap=30,
+        random_state=1,
+    )
+    assert result["se_method"].iloc[0] == "pipeline_bootstrap"
+
+
+def test_no_bootstrap_cost_when_no_standard_error_is_asked_for():
+    """The pipeline bootstrap is only paid for when it is wanted."""
+    result = trend_with_deseasonalization(
+        seasonal_series(), SavitzkyGolay(window_length=21)
+    )
+    assert result["derivative_se"].isna().all()
+    assert result["se_method"].iloc[0] is None
+
+
+def test_it_works_with_any_smoother():
+    """Taking a Smoother rather than a name is the point of the rewrite."""
+    data = seasonal_series()
+    for smoother in (SavitzkyGolay(window_length=15), PenalizedSpline(lam=1e4)):
+        result = trend_with_deseasonalization(data, smoother)
+        assert result["derivative_method"].iloc[0] == smoother.name
+
+
+def test_the_original_values_are_preserved():
+    """The observed column must survive; only the estimate is of the adjusted."""
+    data = seasonal_series()
+    result = trend_with_deseasonalization(data, SavitzkyGolay(window_length=21))
+    np.testing.assert_allclose(result["value"], data["value"])
