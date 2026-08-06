@@ -18,8 +18,8 @@ The package provides a way to estimate the first and second derivative at any gi
 
 installation
 quickstart
+uncertainty
 api
-examples
 examples_executable/index
 limitations
 ```

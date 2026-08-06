@@ -102,12 +102,15 @@ intersphinx_mapping = {
 # Automatically extract typehints
 autodoc_typehints = "description"
 autodoc_member_order = 'bysource'
+# `__init__` is deliberately not in special-members. Most public types here are
+# frozen dataclasses whose __init__ is generated and undocumented, and listing
+# it makes autosummary emit it both on the class page and as a member, which
+# Sphinx reports as a duplicate object description for every one of them.
 autodoc_default_options = {
     'members': True,
     'member-order': 'bysource',
-    'special-members': '__init__',
     'undoc-members': True,
-    'exclude-members': '__weakref__'
+    'exclude-members': '__weakref__',
 }
 
 # -- Options for autosummary extension ---------------------------------------
@@ -124,7 +127,11 @@ napoleon_include_special_with_doc = True
 napoleon_use_admonition_for_examples = False
 napoleon_use_admonition_for_notes = False
 napoleon_use_admonition_for_references = False
-napoleon_use_ivar = False
+# Render "Attributes:" as :ivar: fields rather than standalone attribute
+# directives. Most public types here are frozen dataclasses, whose attributes
+# autodoc already documents; without this, both render and every one of them
+# raises a duplicate-object-description warning.
+napoleon_use_ivar = True
 napoleon_use_param = True
 napoleon_use_rtype = True
 
@@ -152,11 +159,14 @@ todo_include_todos = True
 
 # -- Options for jupyter-sphinx extension ------------------------------------
 
-# Execute notebooks automatically during build
-jupyter_execute_notebooks = "auto"
-
-# Configure execution options
-jupyter_sphinx_execution_options = {
+# The registered config key is `jupyter_execute_kwargs`. Two other names were
+# set here previously -- `jupyter_execute_notebooks` (a myst-nb option, and
+# myst-nb is not installed) and `jupyter_sphinx_execution_options` (not a
+# registered name at all). Sphinx ignores unknown keys silently, so the build
+# had been running with jupyter-sphinx's defaults: no timeout, and
+# allow_errors=True. Every example that raised was rendered as a traceback in
+# the published docs instead of failing the build.
+jupyter_execute_kwargs = {
     "timeout": 60,
     "allow_errors": False,
 }

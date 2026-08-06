@@ -1,251 +1,181 @@
-# Mathematical Foundations and Methods
+# Limitations
 
-This document provides comprehensive information about the mathematical foundations, methods, and best practices for the incline package.
+What the package does not do, and what its numbers do not mean. Everything
+quantified below is measured by `tests/test_econometrics.py`, which runs against
+the shipped code rather than against a description of it.
 
-## Core Mathematical Problem
+## A standard error is about the smooth, not about the truth
 
-The package addresses the problem of estimating the instantaneous rate of change (derivative) at a point $t_0$ in a noisy time series:
+Every estimator here smooths first and differentiates the smooth. What it
+estimates is therefore the derivative of *its own fitted curve*, and the
+standard error describes how that quantity varies across repeated samples.
 
-$$y_i = f(t_i) + \epsilon_i$$
+The gap between the fitted curve and reality is **smoothing bias**, and it is
+governed by the bandwidth you chose — not by the uncertainty machinery. The two
+are separable, and worth separating, because they fail differently:
 
-where $f$ is the underlying smooth function and $\epsilon_i$ is noise. We want to estimate $f'(t_0)$ along with confidence intervals.
+| Method (bandwidth) | reported SE ÷ actual spread | covers its own estimand | covers the **true** derivative |
+|---|---|---|---|
+| Savitzky-Golay, window 21 | 1.010 | 0.950 | 0.950 |
+| Naive differencing | 1.001 | 0.949 | 0.949 |
+| Local polynomial, bw 0.15 | 1.008 | 0.947 | **0.043** |
+| Penalized spline, λ=5·10⁴ | 1.018 | 0.952 | **0.056** |
+| LOESS, frac 0.3 | 1.026 | 0.952 | **0.089** |
 
-## Available Methods and Capabilities
+The variance is right in every row. Where the last column collapses, the
+interval is correctly sized and centered in the wrong place, because that
+bandwidth oversmooths the series it was given.
 
-The incline package provides a comprehensive suite of trend estimation methods:
+Two ways to deal with it:
 
-### 1. Basic Methods
-   
-- **Naive (Central Differences):** Simple finite differences for clean data
-- **Savitzky-Golay Filtering:** Local polynomial fitting with uniform sampling
-- **Spline Interpolation:** Smooth curve fitting with automatic time scaling
-   
-### 2. Advanced Nonparametric Methods
-   
-- **LOESS/LOWESS:** Locally weighted scatterplot smoothing with robust options
-- **Local Polynomial Regression:** Kernel-weighted polynomial fits
-- **L1 Trend Filtering:** Piecewise linear trends with changepoint detection
-   
-### 3. Bayesian and State-Space Methods
-   
-- **Gaussian Process Regression:** Full posterior distribution with principled uncertainty
-- **Kalman Filtering:** Local linear trend models with adaptive parameters
-- **Structural Time Series:** Seasonal decomposition with state-space modeling
-   
-### 4. Multiscale Analysis
-   
-- **SiZer Maps:** Significance of trends across multiple smoothing scales
-- **Adaptive Methods:** Time-varying parameters for non-stationary series
-   
-### 5. Seasonal and Robust Methods
-   
-- **STL Decomposition:** Seasonal-trend decomposition using Loess
-- **Robust Statistics:** Outlier-resistant trend ranking and aggregation
-- **Bootstrap Confidence Intervals:** Non-parametric uncertainty quantification
+- **Undersmooth.** A narrower bandwidth trades precision for a smaller bias.
+- **Correct it.** `bias_correct=True` estimates the bias with a less-smoothed
+  pilot fit and subtracts it. On the LOESS row above that moves coverage from
+  0.089 to 0.941, at roughly five times the interval width.
 
-## Key Features and Improvements
+When the truth happens to lie inside a method's approximation space — a
+quadratic for a degree-2 local polynomial, say — the bias is exactly zero and
+coverage of the true derivative is nominal. That is the regime the calibration
+tests use, precisely so that the standard error is measured on its own terms.
 
-### 1. Automatic Time Scaling ✅
-   
-All methods now handle:
-   
-- DateTime indices with proper scaling
-- Irregular sampling (where applicable)
-- Custom time columns
-- Automatic detection of time units
-   
+## Independent noise is assumed unless you say otherwise
+
+`noise='iid'` is the default and it is often wrong. Under AR(1) errors with
+φ=0.7, measured over 400 replicates:
+
+| | reported SE ÷ actual spread | coverage of a nominal 95% interval |
+|---|---|---|
+| assuming independence | **0.243** | **0.393** |
+| `noise='ar1'` | 1.219 | 0.810 |
+
+Ignoring dependence reports standard errors about a quarter of their true size,
+and a nominal 95% interval covers under 40% of the time. Modeling it recovers
+most of that but not all: the autocorrelation is itself estimated from a finite
+series, so the interval inherits that uncertainty and lands around 0.81 rather
+than 0.95.
+
+The autocorrelation is estimated from **second differences of the raw series**,
+never from the smoother's residuals. Smoothing strips the low-frequency part of
+the noise along with the trend, and a residual-based estimate of φ comes out
+around 0.21 when the truth is 0.7.
+
+Only AR(1) is supported. Long-memory processes, and dependence that changes over
+the series, are not.
+
+## Gaussian processes and state-space models are gated differently
+
+Both are shrinkage estimators: biased by construction, because that is what
+shrinkage is. The unbiasedness and frequentist-coverage gates above therefore do
+not apply to them.
+
+The guarantee that does apply is Bayesian — when the data come from the model's
+prior, a 95% credible interval should contain the truth 95% of the time. That is
+measured in `tests/test_bayesian_calibration.py`:
+
+| | coverage of a nominal 95% interval | reported SE ÷ actual error |
+|---|---|---|
+| Gaussian process, kernel held fixed | 0.900 | — |
+| Local linear trend, variances re-estimated | **0.800** | 0.772 |
+
+Neither reaches nominal, for different and identified reasons.
+
+The Gaussian process falls slightly short because the fit standardizes the
+response: `noise_level` and the signal amplitude end up in units of the series'
+own standard deviation rather than its original units, and the amplitude is
+fixed at 1 internally and cannot be set. A caller therefore cannot specify a
+prior exactly, so the prior being conditioned on is not quite the prior the data
+came from.
+
+The state-space model falls further short, and its
+intervals are **conditional on the fitted variances**, and that estimation error
+is not propagated, so they come out about a quarter too narrow.
+
+A correction for this was implemented and then removed. It scaled the interval
+by each variance parameter's relative standard error, `bse / |param|` — which is
+undefined at the boundary, and variances land on exactly zero routinely whenever
+a component is not needed. Over 40 fits the median inflation factor was 10⁵ and
+the largest 3·10⁸, turning a standard error of 0.017 into 4.6·10⁶. A correction
+that can be eight orders of magnitude wrong is worse than the bias it removes.
+Propagating hyperparameter uncertainty properly is not implemented.
+
+## Seasonal adjustment costs uncertainty, and that is now counted
+
+The seasonal component is estimated from the same data as the trend, so an
+interval that treats it as known is too narrow. Measured on a linear trend with
+a twelve-period cycle:
+
+| | coverage of a nominal 95% interval | reported SE ÷ actual spread |
+|---|---|---|
+| treating the seasonal fit as exact | 0.917 | 0.861 |
+| **what `trend_with_deseasonalization` does** | 0.983 | 1.052 |
+| oracle — true seasonal component known | 0.933 | — |
+
+Asking `trend_with_deseasonalization` for a standard error bootstraps the
+**whole pipeline**: it resamples the decomposition's residuals, redoes the
+decomposition *and* the trend fit together, and takes the interval from the
+spread. It errs slightly conservative, which is the right direction.
+
+That costs `n_bootstrap` decompositions, and is only paid when `se=True`. To
+skip it, compose the two steps yourself — which states the assumption instead of
+hiding it:
+
 ```python
-# Automatic time handling
-result = spline_trend(df)  # Uses datetime index
-result = gp_trend(df, time_column='timestamp')  # Custom time column
+adjusted = deseasonalize(df)
+result = sgolay_trend(adjusted, column_value="deseasonalized", se=True)
 ```
 
-### 2. Parameter Selection ✅
-   
-- **Cross-validation:** `select_smoothing_parameter_cv()`
-- **Automatic selection:** Built into GP and Kalman methods  
-- **Adaptive methods:** `adaptive_gp_trend()`, `adaptive_kalman_trend()`
-   
-```python
-# Automatic parameter selection
-best_s, cv_scores = select_smoothing_parameter_cv(df, method='spline')
-result = gp_trend(df)  # Auto-optimizes hyperparameters
-```
+## Non-Gaussian noise is fine; non-constant variance is not
 
-### 3. Comprehensive Uncertainty Quantification ✅
-   
-- **Bootstrap confidence intervals:** All basic methods
-- **Bayesian posteriors:** Gaussian Process methods
-- **Kalman uncertainty:** State-space models
-- **Significance testing:** SiZer analysis
-   
-```python
-# Multiple uncertainty quantification approaches
-result = bootstrap_derivative_ci(df, n_bootstrap=200)
-result = gp_trend(df, confidence_level=0.95)
-result = kalman_trend(df)  # Natural uncertainty from Kalman filter
-```
+These two are worth separating, because one is a non-issue and the other hides.
 
-### 4. Robust to Irregular Sampling ✅
-   
-Most methods handle irregular sampling:
-   
-- Splines, LOESS, GP, Kalman: Native support
-- Savitzky-Golay: Requires regular sampling (automatically detected)
-   
-### 5. Multiscale Significance Analysis ✅
-   
-```python
-# SiZer analysis across scales
-sizer = sizer_analysis(df, n_bandwidths=20)
-features = sizer.find_significant_features()
+**Heavy tails and skew barely matter.** The derivative is a weighted sum of many
+observations, so its own distribution is close to Gaussian regardless, and the
+variance formula only ever needed the second moment. Measured coverage for a
+nominal 95% interval: Gaussian 0.950, Student-t with 3 degrees of freedom 0.960,
+Laplace 0.930, centered exponential 0.930.
 
-# Combined trend + significance
-result = trend_with_sizer(df, trend_method='loess')
-```
+**Non-constant variance is a real failure, and looks fine in the middle.** With
+one noise level fitted to a series whose scale rises fivefold:
 
-## Mathematical Details
+| position | local noise sd | coverage | reported SE ÷ actual spread |
+|---|---|---|---|
+| early | 0.33 | 1.000 | **1.97** |
+| middle | 0.60 | 0.980 | 1.06 |
+| late | 0.88 | **0.830** | **0.66** |
 
-### Savitzky-Golay Derivatives
+The midpoint looks perfectly calibrated, which is exactly why this is easy to
+miss. Pass `noise=Heteroskedastic()` — or `noise="heteroskedastic"` — and the
+per-point noise level is estimated from a rolling second-difference window,
+restoring 0.90–0.92 coverage and SE ratios of 0.91–1.00 at every position.
 
-The filter fits a polynomial of degree $p$ using least squares over a window of size $2m+1$:
+## Pointwise intervals are not whole-curve statements
 
-$$\hat{f}(t) = \sum_{j=0}^{p} a_j t^j$$
+A 95% pointwise interval fails somewhere along a 130-point curve far more often
+than 5% of the time. `simultaneous=True` widens to a band that covers the whole
+curve at once — for a typical series that multiplier is around 3.5 rather than
+1.96 — and is available only for smoothers with an exact operator.
 
-The derivative is:
+SiZer's map applies this per scale. It is **not** corrected jointly across
+scales as well, because neighboring scales are so dependent that treating them
+as separate tests would be far too conservative. Reading a single cell in
+isolation still overstates confidence; reading persistence across scales is the
+intended use.
 
-$$\hat{f}'(t_0) = \sum_{j=1}^{p} j \cdot a_j t_0^{j-1}$$
+## Boundaries
 
-**Key requirement:** For $k$-th derivative, need $p \geq k$ and window size $\geq p + 1$.
+Every smoother has data on one side only at the ends of a series, so intervals
+flare there. That is real, not an artifact, and it is why the calibration tests
+measure interior points.
 
-**Scaling:** Derivative must be divided by $\Delta t^k$ where $\Delta t$ is the time step.
+## Cost
 
-### Spline Derivatives
+The exact route recovers the estimator's linear operator by evaluating it once
+per observation, which is O(n²) work. Operators are cached per (smoother, axis,
+derivative order), so a multi-scale sweep or a simulation study over one grid
+pays it once. For very long series prefer a smoother with a closed-form
+operator, or use the bootstrap.
 
-Cubic splines minimize:
+## Still not covered
 
-$$\sum_{i=1}^{n} w_i (y_i - f(x_i))^2 + \lambda \int [f''(x)]^2 dx$$
-
-subject to $\sum w_i (y_i - f(x_i))^2 \leq s$.
-
-The derivative is obtained analytically from the spline coefficients.
-
-**Advantage:** Handles irregular sampling naturally.
-
-**Challenge:** Choosing $s$ requires domain knowledge or cross-validation.
-
-### Naive Method (Central Differences)
-
-$$f'(t_i) \approx \frac{y_{i+1} - y_{i-1}}{2\Delta t}$$
-
-**Pros:** Simple, unbiased for linear trends
-
-**Cons:** High variance, sensitive to noise, poor at boundaries
-
-## Autocorrelation and Serial Dependence
-
-Time series typically have autocorrelated errors:
-
-$$\epsilon_t = \rho \epsilon_{t-1} + \eta_t$$
-
-This violates independence assumptions and means:
-
-1. Standard errors are underestimated
-2. Confidence intervals are too narrow
-3. Significance tests are invalid
-
-**Solution:** Use block bootstrap or model the autocorrelation explicitly.
-
-## Best Practices
-
-### 1. Always specify time units
-   
-```python
-# BAD: Assumes unit time
-result = spline_trend(df)
-
-# GOOD: Explicit time handling
-result = improved_spline_trend(df, time_column='date')
-```
-
-### 2. Check sampling regularity
-   
-```python
-time_diffs = df.index.to_series().diff()
-if time_diffs.std() / time_diffs.mean() > 0.1:
-    print("Warning: Irregular sampling detected")
-    # Use splines, not Savitzky-Golay
-```
-
-### 3. Validate smoothing parameters
-   
-```python
-# Use cross-validation
-best_s, cv_results = select_smoothing_parameter_cv(
-    df, param_name='s', method='spline'
-)
-```
-
-### 4. Quantify uncertainty
-   
-```python
-# Get confidence intervals
-result = bootstrap_derivative_ci(
-    df, method='spline', n_bootstrap=100
-)
-
-# Check if trend is significant
-significant = result['significant_trend']
-```
-
-### 5. Handle seasonality
-   
-For seasonal data, consider:
-   
-- Pre-deseasonalizing with STL decomposition
-- Using longer smoothing windows (> seasonal period)
-- Fitting seasonal models explicitly
-
-### 6. Be cautious at boundaries
-   
-```python
-# Mark unreliable edge estimates
-window = 15
-result['reliable'] = True
-result.iloc[:window//2, 'reliable'] = False
-result.iloc[-window//2:, 'reliable'] = False
-```
-
-## Alternative Approaches
-
-For more robust trend estimation, consider:
-
-1. **Local polynomial regression (LOESS)**
-   - More flexible than Savitzky-Golay
-   - Better edge handling
-   - Available in statsmodels
-
-2. **State-space models**
-   - Explicit modeling of trend component
-   - Natural uncertainty quantification
-   - Handles missing data
-
-3. **Gaussian processes**
-   - Full posterior distribution for derivatives
-   - Principled uncertainty quantification
-   - Heavy computationally
-
-4. **L1 trend filtering**
-   - Piecewise linear trends
-   - Automatic changepoint detection
-   - Robust to outliers
-
-## References
-
-1. Savitzky, A., & Golay, M. J. (1964). Smoothing and differentiation of data by simplified least squares procedures. Analytical chemistry, 36(8), 1627-1639.
-
-2. De Boor, C. (1978). A practical guide to splines. Springer-Verlag.
-
-3. Fan, J., & Gijbels, I. (1996). Local polynomial modelling and its applications. Chapman and Hall.
-
-4. Kim, S. J., Koh, K., Boyd, S., & Gorinevsky, D. (2009). ℓ1 trend filtering. SIAM review, 51(2), 339-360.
+Long-memory noise, dependence whose strength changes across the series, and
+propagating hyperparameter uncertainty in the state-space model.

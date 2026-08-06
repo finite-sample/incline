@@ -1,174 +1,141 @@
-# Quick Start Guide
+# Quickstart
 
-This guide will help you get started with incline quickly.
+## Estimate a trend
 
-## Basic Usage
-
-incline provides four main functions for trend estimation:
-
-1. **naive_trend**: Simple forward/backward difference
-2. **spline_trend**: Spline interpolation based trend
-3. **sgolay_trend**: Savitzky-Golay filter based trend  
-4. **trending**: Aggregate trends across multiple time series
-
-## Simple Example
+Smooth the series, then differentiate the smooth:
 
 ```python
+import numpy as np
 import pandas as pd
-from incline import naive_trend, spline_trend, sgolay_trend
+from incline import sgolay_trend
 
-# Create sample time series data with proper datetime index
-data = {
-    'timestamp': pd.date_range('2020-01-01', periods=10, freq='D'),
-    'value': [1, 3, 2, 5, 8, 7, 12, 15, 14, 18]
+df = pd.DataFrame(
+    {"value": np.linspace(0, 10, 100) + np.random.normal(0, 0.5, 100)},
+    index=pd.date_range("2020-01-01", periods=100),
+)
+
+result = sgolay_trend(df, window_length=15, function_order=3)
+result[["smoothed_value", "derivative_value"]].head()
+```
+
+The derivative is reported **per unit of the time axis** — per day for a daily
+`DatetimeIndex`, per unit of your time column if you pass one.
+
+## Ask for uncertainty
+
+An estimate without a standard error is hard to act on. Pass `se=True`:
+
+```python
+result = sgolay_trend(df, se=True)
+
+result[[
+    "derivative_value",
+    "derivative_se",
+    "derivative_ci_lower",
+    "derivative_ci_upper",
+    "significant_trend",
+    "se_method",
+]].head()
+```
+
+It is opt-in because the exact route costs one smoother evaluation per
+observation, and that should be a decision rather than a surprise.
+
+`significant_trend` is True where the interval excludes zero — where the data
+support saying the series is moving at all.
+
+## The output columns
+
+Every estimator returns the same columns, whichever method produced them:
+
+| Column | Meaning |
+|---|---|
+| `smoothed_value` | The fitted curve |
+| `derivative_value` | Its derivative, per unit time |
+| `derivative_method` | Which smoother ran |
+| `derivative_order` | Which derivative this is |
+| `derivative_se` | Standard error, or NaN |
+| `derivative_ci_lower` / `_upper` | Interval bounds, or NaN |
+| `se_method` | `operator`, `native`, `bootstrap`, or None |
+| `significant_trend` | Whether the interval excludes zero |
+
+A NaN standard error paired with `se_method` of None is a deliberate, documented
+state — never a missing column — so downstream code can always index it.
+
+Smoothers add their own settings as extra columns: `window_length` for
+Savitzky-Golay, `bandwidth` for LOESS and local polynomials, and so on.
+
+## Choosing a method
+
+```python
+from incline import (
+    naive_trend,            # central differences; the baseline to beat
+    sgolay_trend,           # local polynomial on a fixed window
+    local_polynomial_trend, # kernel-weighted local regression
+    loess_trend,            # LOESS
+    pspline_trend,          # penalized smoothing spline
+    spline_trend,           # knot-selecting smoothing spline
+    l1_trend_filter,        # piecewise-polynomial with sparse kinks
+    gp_trend,               # Gaussian process
+    kalman_trend,           # local linear trend state-space model
+)
+```
+
+If you have no strong preference, let the package pick:
+
+```python
+from incline import estimate_trend, select_trend_method
+
+print(select_trend_method(df))          # e.g. 'loess'
+result = estimate_trend(df, method="auto", se=True)
+```
+
+Pass `criteria="exact"` to `select_trend_method` to require a method whose
+standard errors are exact rather than bootstrapped.
+
+## Second derivatives
+
+```python
+acceleration = sgolay_trend(df, derivative_order=2, window_length=21)
+```
+
+Not every method supports every order — a Matérn-3/2 Gaussian process is only
+once differentiable, and asking for more raises rather than returning a number.
+
+## An explicit time column
+
+When the index is not the time axis:
+
+```python
+df = pd.DataFrame({"t": [0.0, 1.5, 2.0, 4.5], "value": [1.0, 2.0, 2.5, 5.0]})
+result = sgolay_trend(df, column_value="value", time_column="t")
+```
+
+## Correlated errors
+
+The default assumes independent noise. When errors are autocorrelated — which
+is common in real series — that assumption reports standard errors substantially
+smaller than they should be:
+
+```python
+result = sgolay_trend(df, se=True, noise="ar1")
+```
+
+See [Uncertainty](uncertainty.md) for what that costs and what it buys.
+
+## Ranking many series
+
+```python
+from incline import trending, estimate, SavitzkyGolay
+
+estimates = {
+    name: estimate(SavitzkyGolay(), series, se=True)
+    for name, series in your_series.items()
 }
-df = pd.DataFrame(data)
-df = df.set_index('timestamp')
 
-# Method 1: Naive trend estimation (with automatic time scaling)
-naive_result = naive_trend(df)
-print("Naive trend:")
-print(naive_result[['value', 'derivative_value']].head())
-
-# Method 2: Spline-based trend estimation (auto-selects smoothing parameter)
-spline_result = spline_trend(df, function_order=3, derivative_order=1)
-print("\nSpline trend:")
-print(spline_result[['value', 'smoothed_value', 'derivative_value']].head())
-
-# Method 3: Savitzky-Golay trend estimation (with edge effect marking)
-sgolay_result = sgolay_trend(df, window_length=5, function_order=2)
-print("\nSavitzky-Golay trend:")
-print(sgolay_result[['value', 'smoothed_value', 'derivative_value', 'edge_region']].head())
+ranked = trending(estimates, k=5, how="mean")
+ranked[["id", "trend", "trend_se", "significant", "rank"]]
 ```
 
-## Understanding the Output
-
-All trend functions return a DataFrame with these columns:
-
-- **Original data columns**: Your input data is preserved
-- **smoothed_value**: The smoothed version of your time series (None for naive method)
-- **derivative_value**: The estimated derivative/trend at each point (properly scaled by time units)
-- **derivative_method**: Which method was used ('naive', 'spline', or 'sgolay')
-- **function_order**: The polynomial order used for smoothing
-- **derivative_order**: The order of derivative calculated (1 for slope, 2 for acceleration)
-- **smoothing_parameter**: The smoothing parameter used (for splines)
-- **edge_region**: Boolean flag marking less reliable estimates near boundaries (Savitzky-Golay only)
-
-## Working with Multiple Time Series
-
-Use the `trending` function to analyze multiple time series:
-
-```python
-from incline import trending
-
-# Process multiple time series
-results = []
-for i, ts_data in enumerate([df1, df2, df3]):  # Your time series list
-    result = spline_trend(ts_data)
-    result['id'] = f'series_{i}'  # Add identifier
-    results.append(result)
-
-# Find which series are trending most strongly
-trend_summary = trending(
-    results, 
-    derivative_order=1,  # First derivative (slope)
-    max_or_avg='max',    # Maximum trend in time window
-    k=3                  # Look at last 3 time points
-)
-
-print("Series ranked by maximum trend:")
-print(trend_summary.sort_values('max_or_avg', ascending=False))
-```
-
-## Parameter Tuning
-
-**For spline_trend**:
-
-- `function_order`: Higher values = smoother curves (default: 3)
-- `s`: Smoothing factor, higher = more smoothing (default: 3)
-- `derivative_order`: 1 for slope, 2 for acceleration (default: 1)
-
-**For sgolay_trend**:
-
-- `window_length`: Size of smoothing window, must be odd (default: 15)
-- `function_order`: Polynomial order for fitting (default: 3)
-- `derivative_order`: 1 for slope, 2 for acceleration (default: 1)
-
-## Advanced Features
-
-### Uncertainty Quantification
-
-Get confidence intervals for derivative estimates:
-
-```python
-from incline import bootstrap_derivative_ci
-
-# Get 95% confidence intervals using block bootstrap
-result_with_ci = bootstrap_derivative_ci(
-    df, 
-    method='spline',
-    n_bootstrap=100,
-    confidence_level=0.95
-)
-
-# Check which trends are statistically significant
-significant_trends = result_with_ci[result_with_ci['significant_trend']]
-print(f"Found {len(significant_trends)} significant trend points")
-```
-
-### Automatic Parameter Selection
-
-Use cross-validation to select optimal smoothing parameters:
-
-```python
-from incline import select_smoothing_parameter_cv
-
-# Find optimal smoothing parameter for spline
-best_s, cv_results = select_smoothing_parameter_cv(
-    df, 
-    method='spline',
-    param_name='s',
-    cv_folds=5
-)
-
-print(f"Optimal smoothing parameter: {best_s}")
-
-# Use the optimal parameter
-optimal_result = spline_trend(df, s=best_s)
-```
-
-### Time Vector Support
-
-Work with irregular time series or explicit time columns:
-
-```python
-# With explicit time column
-df_with_time = pd.DataFrame({
-    'time_hours': [0, 1.5, 3.2, 5.1, 7.8],  # Irregular spacing
-    'temperature': [20.1, 21.3, 19.8, 22.5, 24.1]
-})
-
-# Specify time column for proper scaling
-result = spline_trend(df_with_time, 
-                     column_value='temperature',
-                     time_column='time_hours')
-```
-
-### Edge Effect Handling
-
-Be aware of less reliable estimates near boundaries:
-
-```python
-result = sgolay_trend(df, window_length=15)
-
-# Filter out edge regions for more reliable analysis
-reliable_points = result[~result['edge_region']]
-print(f"Reliable estimates: {len(reliable_points)}/{len(result)}")
-```
-
-## Next Steps
-
-- Check out the [examples](examples.md) for real-world use cases
-- See the [API reference](api.md) for detailed function documentation  
-- Read about [limitations](limitations.md) to understand when and how to use each method
-- Look at the example notebook in the repository for stock market analysis
+Standard errors computed upstream are carried through, so the ranking can tell
+you which of the leaders are actually distinguishable from flat.
