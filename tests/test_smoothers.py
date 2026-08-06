@@ -279,3 +279,88 @@ def test_bias_correction_widens_and_recentres(smoother):
     corrected = smoother.fit(AXIS, y, order=1, se=True, bias_correct=True)
     assert corrected.provenance.bias_corrected
     assert np.nanmean(corrected.se) >= np.nanmean(plain.se)
+
+
+def test_noise_model_reaches_the_bootstrap(recwarn):
+    """Regression: `noise=` was ignored by every bootstrapped smoother.
+
+    The fitted noise model was computed and then discarded, and the bootstrap
+    re-derived its own scale from the data, so an explicit sigma had no effect
+    on the reported uncertainty at all.
+    """
+    del recwarn
+    y = noisy(21)
+    smoother = InterpolatingSpline()
+    small = smoother.fit(
+        AXIS,
+        y,
+        order=1,
+        se=True,
+        noise=IID(sigma=0.3),
+        n_bootstrap=40,
+        random_state=1,
+    )
+    large = smoother.fit(
+        AXIS,
+        y,
+        order=1,
+        se=True,
+        noise=IID(sigma=3.0),
+        n_bootstrap=40,
+        random_state=1,
+    )
+    ratio = float(np.nanmean(large.se) / np.nanmean(small.se))
+    assert 5.0 < ratio < 20.0, (
+        f"a tenfold noise level changed the standard error by {ratio:.2f}x"
+    )
+
+
+def test_heteroskedastic_noise_reaches_the_bootstrap():
+    """A varying scale must shape a bootstrapped interval too, not just an exact one."""
+    from incline.noise import Heteroskedastic
+
+    ramp = np.linspace(0.1, 2.0, N)
+    rng = np.random.default_rng(23)
+    y = 0.05 * AXIS.x + rng.normal(0, 1, N) * ramp
+    estimate = InterpolatingSpline().fit(
+        AXIS,
+        y,
+        order=1,
+        se=True,
+        noise=Heteroskedastic(sigma=ramp),
+        n_bootstrap=60,
+        random_state=2,
+    )
+    quiet = float(np.nanmean(estimate.se[10:35]))
+    loud = float(np.nanmean(estimate.se[-35:-10]))
+    assert loud > 2.0 * quiet, f"quiet end {quiet:.4f}, noisy end {loud:.4f}"
+
+
+def test_grid_methods_warn_on_an_irregular_axis():
+    """Regression: TimeAxis.require_regular existed but was never called.
+
+    A Savitzky-Golay filter applied to an unevenly spaced series scales every
+    derivative by one median step, so callers got silently wrong per-time
+    slopes with no warning at all.
+    """
+    from incline.axis import TimeAxis as Axis
+
+    uneven = Axis._build(np.sort(np.random.default_rng(1).uniform(0, 100, 60)), "index")
+    y = 2.0 * uneven.x
+    with pytest.warns(UserWarning, match="uniform sampling"):
+        SavitzkyGolay(window_length=11).fit(uneven, y, order=1)
+
+
+def test_grid_methods_stay_quiet_on_a_regular_axis():
+    """The warning must not fire on the ordinary case."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        SavitzkyGolay(window_length=11).fit(AXIS, noisy(3), order=1)
+
+
+def test_only_grid_methods_declare_the_requirement():
+    """A spline or LOESS handles irregular spacing natively and must not warn."""
+    assert SavitzkyGolay.requires_regular_grid
+    assert NaiveDifference.requires_regular_grid
+    assert not LocalPolynomial.requires_regular_grid
+    assert not InterpolatingSpline.requires_regular_grid

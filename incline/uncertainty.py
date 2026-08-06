@@ -216,6 +216,7 @@ def residual_bootstrap(
     confidence_level: float = 0.95,
     block_size: int | None = None,
     random_state: int | np.random.Generator | None = None,
+    scale: npt.NDArray[np.float64] | float | None = None,
 ) -> tuple[
     npt.NDArray[np.float64] | None,
     npt.NDArray[np.float64] | None,
@@ -247,6 +248,9 @@ def residual_bootstrap(
         block_size: When set, residuals are resampled in contiguous blocks of
             this length, preserving short-range dependence.
         random_state: Seed or Generator.
+        scale: Noise standard deviation to resample at, either one value or one
+            per observation. Comes from the caller's noise model; estimated
+            from the series when None.
 
     Returns:
         Tuple of (se, ci_lower, ci_upper), or (None, None, None) if every
@@ -265,13 +269,22 @@ def residual_bootstrap(
     residuals = residuals[finite]
     residuals = residuals - residuals.mean()
 
+    # The scale to resample at comes from the caller's noise model when there is
+    # one. Recomputing it here regardless, as this once did, makes `noise=` a
+    # no-op for every smoother that is bootstrapped rather than probed: an
+    # explicit IID(sigma=...), Heteroskedastic or Given had no effect at all.
+    target = (
+        np.full(n, rice_sigma(y))
+        if scale is None
+        else np.broadcast_to(np.asarray(scale, dtype=float), (n,))
+    )
+
     # A series whose second differences vanish carries no information about its
     # own noise. Resampling residuals of size 1e-16 would still return a spread
     # of 1e-16, and a point estimate of the same magnitude then "excludes zero".
     # No standard error is the honest answer; zero is not.
-    sigma = rice_sigma(y)
-    scale = float(np.max(np.abs(y))) or 1.0
-    if sigma <= scale * 1e-12:
+    magnitude = float(np.max(np.abs(y))) or 1.0
+    if float(np.mean(target)) <= magnitude * 1e-12:
         warnings.warn(
             "The series has no estimable noise level, so no standard error "
             "can be bootstrapped.",
@@ -279,14 +292,17 @@ def residual_bootstrap(
         )
         return None, None, None
 
+    # Standardize the residuals so that scaling by `target` below gives each
+    # point exactly the spread the noise model asks for. That is what lets a
+    # varying scale be honored as well as a constant one.
     spread = float(residuals.std())
     if spread > 1e-12:
-        residuals = residuals * (sigma / spread)
+        residuals = residuals / spread
 
     replicates: list[npt.NDArray[np.float64]] = []
     failures = 0
     for _ in range(n_bootstrap):
-        drawn = _draw_residuals(residuals, n, block_size, rng)
+        drawn = _draw_residuals(residuals, n, block_size, rng) * target
         try:
             estimate = np.asarray(refit(fitted + drawn), dtype=float)
         except Exception:  # one bad replicate must not abort the rest

@@ -179,6 +179,26 @@ class NoiseFit:
     explicit: npt.NDArray[np.float64] | None = None
     sigma_vector: npt.NDArray[np.float64] | None = None
 
+    def pointwise_scale(self, n: int) -> npt.NDArray[np.float64]:
+        """Per-observation noise standard deviation.
+
+        The bootstrap needs a scale to rescale residuals to, and that scale has
+        to come from the noise model the caller asked for rather than being
+        recomputed from the data -- otherwise ``noise=`` would have no effect on
+        any smoother that is bootstrapped rather than probed.
+
+        Args:
+            n: Number of observations.
+
+        Returns:
+            Standard deviation at each point.
+        """
+        if self.explicit is not None:
+            return np.sqrt(np.maximum(np.diag(self.explicit), 0.0))
+        if self.sigma_vector is not None:
+            return np.asarray(self.sigma_vector, dtype=np.float64)
+        return np.full(n, self.sigma, dtype=np.float64)
+
     def covariance(self, n: int) -> npt.NDArray[np.float64]:
         """Materialise the n x n noise covariance.
 

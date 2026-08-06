@@ -240,3 +240,38 @@ def test_the_original_values_are_preserved():
     data = seasonal_series()
     result = trend_with_deseasonalization(data, SavitzkyGolay(window_length=21))
     np.testing.assert_allclose(result["value"], data["value"])
+
+
+def test_pipeline_bootstrap_honors_confidence_level():
+    """Regression: the pipeline percentiles were hard-coded to 2.5/97.5.
+
+    A requested 50% interval came back as a 95% one, which silently changes
+    every significance decision downstream.
+    """
+    data = seasonal_series()
+    smoother = SavitzkyGolay(window_length=21)
+    narrow = trend_with_deseasonalization(
+        data,
+        smoother,
+        se=True,
+        confidence_level=0.50,
+        n_bootstrap=40,
+        random_state=1,
+    )
+    wide = trend_with_deseasonalization(
+        data,
+        smoother,
+        se=True,
+        confidence_level=0.99,
+        n_bootstrap=40,
+        random_state=1,
+    )
+    narrow_width = float(
+        (narrow["derivative_ci_upper"] - narrow["derivative_ci_lower"]).mean()
+    )
+    wide_width = float(
+        (wide["derivative_ci_upper"] - wide["derivative_ci_lower"]).mean()
+    )
+    assert wide_width > 2.0 * narrow_width, (
+        f"50% width {narrow_width:.5f} vs 99% width {wide_width:.5f}"
+    )

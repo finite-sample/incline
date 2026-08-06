@@ -124,6 +124,21 @@ documented state — never a missing column. Gone: `edge_region`, `changepoint`,
 - `docs/conf.py` set two unregistered Sphinx keys, so the documentation built
   with `allow_errors=True` and broken examples rendered as tracebacks.
 - CI installed the extras `.[test,advanced]`, neither of which existed.
+- `noise=` was ignored by every bootstrapped smoother: the fitted noise model
+  was computed and discarded, and the bootstrap re-derived its own scale, so an
+  explicit `IID(sigma=...)`, `Heteroskedastic` or `Given` had no effect on the
+  reported uncertainty.
+- `TimeAxis.require_regular` existed but was never called, so Savitzky-Golay and
+  naive differencing applied a uniform-grid method to unevenly spaced series
+  without warning. On an irregular axis with a true slope of 2.0, Savitzky-Golay
+  returned a median of 2.446 silently.
+- `GaussianProcess(kernel="matern52", derivative_order=2)` raised, though a
+  nu=5/2 process is twice mean-square differentiable and the capability was
+  advertised. The second-derivative kernel and its prior variance are now
+  implemented.
+- `trend_with_deseasonalization(..., confidence_level=x)` returned a 95%
+  interval whatever level was requested, because the pipeline bootstrap
+  hard-coded its percentiles.
 
 ### Verified
 

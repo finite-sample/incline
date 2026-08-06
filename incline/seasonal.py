@@ -511,6 +511,7 @@ def trend_with_deseasonalization(
             fit_kwargs,
             n_bootstrap,
             random_state,
+            float(fit_kwargs.get("confidence_level", 0.95)),
         )
         if spread is not None:
             result["derivative_se"] = spread
@@ -535,6 +536,7 @@ def _bootstrap_pipeline(
     fit_kwargs: dict[str, Any],
     n_bootstrap: int,
     random_state: int | np.random.Generator | None,
+    confidence_level: float,
 ) -> tuple[Any, Any, Any]:
     """Resample decomposition residuals and redo decomposition plus trend.
 
@@ -592,10 +594,14 @@ def _bootstrap_pipeline(
         return None, None, None
 
     stacked = np.asarray(draws)
+    # The percentiles have to follow the requested level; hard-coding 2.5/97.5
+    # returned a 95% interval whatever the caller asked for, which silently
+    # changed significance decisions.
+    alpha = 1.0 - confidence_level
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         return (
-            np.nanpercentile(stacked, 2.5, axis=0),
-            np.nanpercentile(stacked, 97.5, axis=0),
+            np.nanpercentile(stacked, 100 * alpha / 2, axis=0),
+            np.nanpercentile(stacked, 100 * (1 - alpha / 2), axis=0),
             np.nanstd(stacked, axis=0),
         )

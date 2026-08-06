@@ -303,3 +303,52 @@ def test_state_space_standard_error_is_the_right_order_of_magnitude():
     estimate = StateSpace().fit(axis, level + rng.normal(0, 0.5, 120), order=1, se=True)
     error = abs(float(estimate.derivative[60]) - float(slope[60]))
     assert float(estimate.se[60]) < 100 * max(error, 1e-3)
+
+
+def test_matern52_delivers_the_second_derivative_it_advertises():
+    """Regression: MATERN_ORDERS said 2 but the kernel branch raised.
+
+    A nu=5/2 process is twice mean-square differentiable, so the estimate and
+    its posterior variance both exist; the advertised capability just was not
+    implemented.
+    """
+    assert MATERN_ORDERS["matern52"] == 2
+    axis = TimeAxis.positional(120)
+    x = axis.x / 12.0
+    y = np.sin(x)
+
+    estimate = GaussianProcess(kernel="matern52", n_restarts=0).fit(
+        axis, y, order=2, se=True
+    )
+    assert np.all(np.isfinite(estimate.derivative))
+    assert estimate.se is not None
+    assert np.all(estimate.se >= 0)
+    # The second derivative of sin is -sin, up to the axis rescaling.
+    assert (
+        np.corrcoef(estimate.derivative[20:-20], (-np.sin(x) / 144)[20:-20])[0, 1] > 0.8
+    )
+
+
+def test_matern52_second_derivative_kernel_matches_numerical():
+    """The analytic forms must be the derivatives they claim to be."""
+    parts = _KernelParts(amplitude=1.7, length_scale=2.3, noise=0.0, family="matern52")
+    r = np.array([0.4, 1.1, -2.0])
+    step = 1e-4
+
+    def base(v):
+        return float(_cross_derivative(parts, np.array([float(v)]), 0)[0])
+
+    numerical = np.array(
+        [(base(v + step) - 2 * base(v) + base(v - step)) / step**2 for v in r]
+    )
+    np.testing.assert_allclose(_cross_derivative(parts, r, 2), numerical, rtol=1e-3)
+
+    # d4k/dr4 at the origin converges slowly because of the |r|^5 term, so
+    # compare a Richardson extrapolation rather than a single difference.
+    def fourth(h):
+        return (
+            base(2 * h) - 4 * base(h) + 6 * base(0) - 4 * base(-h) + base(-2 * h)
+        ) / h**4
+
+    extrapolated = 2 * fourth(0.0125) - fourth(0.025)
+    assert _prior_derivative_variance(parts, 2) == pytest.approx(extrapolated, rel=0.02)

@@ -96,6 +96,10 @@ class Smoother(ABC):
     linear: ClassVar[bool] = False
     has_native_posterior: ClassVar[bool] = False
     supported_orders: ClassVar[frozenset[int]] = frozenset({1, 2})
+    # Whether the method's arithmetic assumes evenly spaced observations. A
+    # convolution filter cannot be applied to an irregular axis and produce a
+    # correct per-time derivative; it scales everything by one median step.
+    requires_regular_grid: ClassVar[bool] = False
 
     @property
     def is_linear(self) -> bool:
@@ -295,6 +299,9 @@ class Smoother(ABC):
             )
         if len(y) != axis.n:
             raise ValueError(f"y has {len(y)} values but the axis has {axis.n} points")
+        if self.requires_regular_grid:
+            # Once per fit, not once per probe evaluation.
+            axis.require_regular(self.name)
 
         if bias_correct:
             return self._fit_bias_corrected(
@@ -418,6 +425,7 @@ class Smoother(ABC):
             confidence_level=confidence_level,
             block_size=block,
             random_state=random_state,
+            scale=noise_fit.pointwise_scale(axis.n),
         )
         if standard_errors is None:
             return estimate
@@ -567,6 +575,7 @@ class SavitzkyGolay(Smoother):
     name: ClassVar[str] = "sgolay"
     linear: ClassVar[bool] = True
     supported_orders: ClassVar[frozenset[int]] = frozenset({0, 1, 2, 3})
+    requires_regular_grid: ClassVar[bool] = True
 
     window_length: int = 15
     polyorder: int = 3
@@ -640,6 +649,7 @@ class NaiveDifference(Smoother):
     name: ClassVar[str] = "naive"
     linear: ClassVar[bool] = True
     supported_orders: ClassVar[frozenset[int]] = frozenset({1})
+    requires_regular_grid: ClassVar[bool] = True
 
     def evaluate(
         self, axis: TimeAxis, y: npt.NDArray[np.float64], order: int

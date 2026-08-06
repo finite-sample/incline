@@ -151,8 +151,15 @@ def _cross_derivative(
                     return amplitude * (1 + a * np.abs(r) + a**2 * r**2 / 3) * decay
                 case 1:
                     return -amplitude * (a**2 / 3) * r * (1 + a * np.abs(r)) * decay
+                case 2:
+                    return (
+                        -amplitude
+                        * (a**2 / 3)
+                        * decay
+                        * (1 + a * np.abs(r) - a**2 * r**2)
+                    )
                 case _:
-                    raise ValueError("matern52 supports first derivatives only")
+                    raise ValueError("matern52 supports up to second derivatives")
         case _:
             raise ValueError(f"Unknown kernel family {parts.family!r}")
 
@@ -187,6 +194,11 @@ def _prior_derivative_variance(parts: _KernelParts, order: int) -> float:
             return 3 * amplitude / length**2
         case ("matern52", 1):
             return 5 * amplitude / (3 * length**2)
+        case ("matern52", 2):
+            # d4k/dr4 at the origin. Matern-5/2 is twice mean-square
+            # differentiable (nu > 2), so this limit exists, though the |r|^5
+            # term makes a finite difference converge to it only slowly.
+            return 25 * amplitude / length**4
         case _:
             raise ValueError(
                 f"{parts.family} is not {order}-times mean-square "
