@@ -28,9 +28,10 @@ jobs:
         version: "latest"
         
     - name: Install dependencies
-      run: |
-        uv venv
-        uv pip install -e ".[test,advanced]"
+      # `test` is a dependency-group, not an extra, and there has never been an
+      # `advanced` extra. `uv pip install -e ".[test,advanced]"` therefore
+      # installed neither; the test deps only arrived incidentally.
+      run: uv sync --group test
         
     - name: Lint with ruff
       run: |
@@ -38,8 +39,8 @@ jobs:
         uv run ruff format --check .
         
     - name: Run tests with pytest
-      run: |
-        uv run pytest --cov=incline --cov-report=xml
+      # The deep Monte Carlo tier is marked slow and runs on a schedule.
+      run: uv run pytest -m "not slow" --cov=incline --cov-report=xml
         
     - name: Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'

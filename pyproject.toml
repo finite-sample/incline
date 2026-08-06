@@ -8,7 +8,7 @@ module-root = "."
 
 [project]
 name = "incline"
-version = "0.5.0"
+version = "1.0.0"
 description = "Estimate Trend at a Particular Point in a Noisy Time Series"
 authors = [
     {name = "Suriyan Laohaprapanon", email = "suriyant@gmail.com"},
@@ -82,7 +82,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--cov=incline --cov-report=html --cov-report=term-missing -v"
+addopts = "--cov=incline --cov-report=term-missing -v"
+markers = [
+    "slow: Monte Carlo calibration; run with -m slow or deselect with -m 'not slow'",
+]
 
 [tool.coverage.run]
 source = ["incline"]

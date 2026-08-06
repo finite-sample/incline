@@ -1,0 +1,62 @@
+name: monte-carlo
+
+# The deep Monte Carlo tier -- 400 replicates rather than 100 -- is where the
+# unbiasedness, coverage, size and power gates have enough precision to mean
+# something. `ci.yml` deselects it with `-m "not slow"` and a comment saying it
+# "runs on a schedule". This is that schedule; until this file existed there was
+# no workflow with a `schedule:` trigger anywhere in the repository, so the deep
+# tier ran nowhere at all.
+#
+# Why that matters: at 100 replicates the three-sigma binomial band around a
+# nominal 95% coverage is roughly [0.885, 1.0], which passes an estimator whose
+# true coverage is 89%. The 400-replicate tier is what closes that gap, and it
+# was dark.
+#
+# Known issue, deliberately not papered over: on its first-ever execution this
+# tier reported one failure in
+# `test_bayesian_calibration.py::test_a_wrong_length_scale_breaks_gp_calibration[deep]`,
+# on a heavily loaded machine, and passed on a clean re-run of the identical
+# command. Measured in isolation that assertion holds by roughly 106 Monte Carlo
+# standard errors, so a marginal threshold does not explain it. The cause is
+# unknown. `--tb=long -rA` below exists so the next occurrence is diagnosable
+# rather than a summary line.
+
+on:
+  schedule:
+    # 04:00 UTC daily. Nothing depends on the hour; it is off-peak.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      replicates:
+        description: "Replicates per Monte Carlo study (INCLINE_MC_REPS)"
+        required: false
+        default: "400"
+
+jobs:
+  deep-tier:
+    runs-on: ubuntu-latest
+    # The tier takes 11-14 minutes locally; allow generous headroom on a
+    # shared runner rather than failing on a slow morning.
+    timeout-minutes: 45
+
+    env:
+      INCLINE_MC_REPS: ${{ github.event.inputs.replicates || '400' }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --group test
+
+      - name: Run the deep Monte Carlo tier
+        # -rA and --tb=long so a failure arrives with its assertion message and
+        # the printed coverage/standard-error diagnostics attached. The tier's
+        # own tests print those under `capsys.disabled()`, which is only useful
+        # if the output is captured.
+        run: uv run pytest -m slow -v -rA --tb=long --no-header
