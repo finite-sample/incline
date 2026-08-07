@@ -333,7 +333,8 @@ class Smoother(ABC):
             # is wrong by 6x is not.
             raise ValueError(
                 f"{self.name} cannot estimate a derivative from a series with "
-                f"{missing} missing values; interpolate or drop them first "
+                f"{missing} missing value{'' if missing == 1 else 's'}; "
+                f"interpolate or drop {'it' if missing == 1 else 'them'} first "
                 f"(df['value'].interpolate(), or df.dropna())."
             )
         if self.requires_regular_grid:
