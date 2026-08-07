@@ -547,7 +547,7 @@ def test_missing_values_are_refused_by_every_smoother(name):
     """
     y = noisy()
     y[40] = np.nan
-    with pytest.raises(ValueError, match="missing values"):
+    with pytest.raises(ValueError, match="missing value"):
         build(name).fit(AXIS, y, order=1, se=True)
 
 
@@ -555,12 +555,18 @@ def test_the_refusal_names_the_count_and_the_remedy():
     """An error that does not say what to do just relocates the problem."""
     y = noisy()
     y[10:15] = np.nan
-    with pytest.raises(ValueError, match="missing values") as raised:
+    with pytest.raises(ValueError, match="missing value") as raised:
         SavitzkyGolay(window_length=15).fit(AXIS, y, order=1)
     message = str(raised.value)
     assert "5 missing values" in message
     assert "interpolate" in message
     assert "dropna" in message
+
+    y_one = noisy()
+    y_one[10] = np.nan
+    with pytest.raises(ValueError, match="missing value") as single:
+        SavitzkyGolay(window_length=15).fit(AXIS, y_one, order=1)
+    assert "1 missing value;" in str(single.value), str(single.value)
 
 
 def test_a_gap_can_no_longer_inflate_the_noise_estimate():
@@ -585,7 +591,7 @@ def test_a_gap_can_no_longer_inflate_the_noise_estimate():
     # public path can reach them with a gap.
     assert rice_sigma(gapped) > 4 * truth
     assert estimate_ar1(gapped)[1] > 4 * truth
-    with pytest.raises(ValueError, match="missing values"):
+    with pytest.raises(ValueError, match="missing value"):
         SavitzkyGolay(window_length=15).fit(axis, gapped, order=1, se=True)
 
 
@@ -593,5 +599,5 @@ def test_an_infinite_value_is_refused_too():
     """isfinite, not isnan -- an overflow is just as unusable as a gap."""
     y = noisy()
     y[20] = np.inf
-    with pytest.raises(ValueError, match="missing values"):
+    with pytest.raises(ValueError, match="missing value"):
         SavitzkyGolay(window_length=15).fit(AXIS, y, order=1)
