@@ -8,7 +8,7 @@ module-root = "."
 
 [project]
 name = "incline"
-version = "0.5.0"
+version = "1.0.0"
 description = "Estimate Trend at a Particular Point in a Noisy Time Series"
 authors = [
     {name = "Suriyan Laohaprapanon", email = "suriyant@gmail.com"},
@@ -54,6 +54,8 @@ docs = [
 
 [dependency-groups]
 dev = [
+    # The Monte Carlo machinery, extracted from this package's own tests.
+    "simcheck @ git+https://github.com/finite-sample/simcheck",
     "check-manifest",
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -64,6 +66,8 @@ dev = [
     "vulture>=2.16",
 ]
 test = [
+    # The Monte Carlo machinery, extracted from this package's own tests.
+    "simcheck @ git+https://github.com/finite-sample/simcheck",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "coverage",
@@ -82,7 +86,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--cov=incline --cov-report=html --cov-report=term-missing -v"
+addopts = "--cov=incline --cov-report=term-missing -v"
+markers = [
+    "slow: Monte Carlo calibration; run with -m slow or deselect with -m 'not slow'",
+]
 
 [tool.coverage.run]
 source = ["incline"]

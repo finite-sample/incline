@@ -1,0 +1,511 @@
+<div class="viz-root" id="explorer">
+  <style>
+    #explorer {
+      color-scheme: light;
+      --surface-1: #fcfcfb;
+      --plane: #f9f9f7;
+      --text-primary: #0b0b0b;
+      --text-secondary: #52514e;
+      --muted: #898781;
+      --grid: #e1e0d9;
+      --baseline: #c3c2b7;
+      --series-1: #2a78d6;
+      --series-2: #eb6834;
+      --border: rgba(11, 11, 11, 0.10);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: var(--text-primary);
+      background: var(--plane);
+      padding: 20px;
+      border-radius: 10px;
+      max-width: 100%;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:where(:not([data-theme="light"])) #explorer {
+        color-scheme: dark;
+        --surface-1: #1a1a19;
+        --plane: #0d0d0d;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --grid: #2c2c2a;
+        --baseline: #383835;
+        --series-1: #3987e5;
+        --series-2: #d95926;
+        --border: rgba(255, 255, 255, 0.10);
+      }
+    }
+    :root[data-theme="dark"] #explorer {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --plane: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --border: rgba(255, 255, 255, 0.10);
+    }
+
+    #explorer h2 { font-size: 1.15rem; margin: 0 0 4px; font-weight: 600; }
+    #explorer .lede {
+      font-size: 0.86rem; color: var(--text-secondary);
+      margin: 0 0 16px; max-width: 62ch; line-height: 1.5;
+    }
+    #explorer .controls {
+      display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: flex-end;
+      padding: 12px 14px; margin-bottom: 14px;
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    #explorer .field { display: flex; flex-direction: column; gap: 4px; }
+    #explorer label {
+      font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--muted); font-weight: 600;
+    }
+    #explorer select, #explorer input[type=range] {
+      font: inherit; font-size: 0.84rem; color: var(--text-primary);
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 6px; padding: 4px 6px; min-width: 150px;
+    }
+    #explorer input[type=range] { padding: 0; min-width: 130px; }
+    #explorer .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    #explorer .chip {
+      font-size: 0.78rem; padding: 5px 10px; border-radius: 999px;
+      border: 1px solid var(--border); background: var(--surface-1);
+      color: var(--text-secondary); cursor: pointer; user-select: none;
+    }
+    #explorer .chip[aria-pressed="true"] {
+      background: var(--series-1); border-color: var(--series-1); color: #fff;
+    }
+    #explorer .chip[disabled] { opacity: 0.4; cursor: not-allowed; }
+    #explorer .panel {
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 14px 6px; margin-bottom: 12px;
+      overflow-x: auto;
+    }
+    #explorer .panel h3 {
+      font-size: 0.82rem; margin: 0 0 2px; font-weight: 600;
+    }
+    #explorer .panel p.sub {
+      font-size: 0.75rem; color: var(--muted); margin: 0 0 8px;
+    }
+    #explorer .legend {
+      display: flex; gap: 14px; flex-wrap: wrap;
+      font-size: 0.75rem; color: var(--text-secondary); margin: 2px 0 8px;
+    }
+    #explorer .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    #explorer .swatch { width: 11px; height: 11px; border-radius: 2px; }
+    #explorer .readout {
+      font-size: 0.76rem; color: var(--text-secondary);
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 14px; line-height: 1.6;
+    }
+    #explorer .readout code {
+      font-size: 0.95em; color: var(--text-primary);
+      background: var(--plane); padding: 1px 5px; border-radius: 4px;
+    }
+    #explorer table {
+      width: 100%; border-collapse: collapse; font-size: 0.76rem;
+      font-variant-numeric: tabular-nums; margin-top: 8px;
+    }
+    #explorer th, #explorer td {
+      text-align: right; padding: 3px 8px;
+      border-bottom: 1px solid var(--grid);
+    }
+    #explorer th:first-child, #explorer td:first-child { text-align: left; }
+    #explorer .tablewrap { max-height: 260px; overflow: auto; }
+    #explorer svg { display: block; width: 100%; height: auto; }
+    #explorer .tip {
+      position: absolute; pointer-events: none; opacity: 0;
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 6px; padding: 6px 9px; font-size: 0.74rem;
+      color: var(--text-primary); box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+      transition: opacity 0.08s; white-space: nowrap; z-index: 5;
+    }
+    #explorer .plotwrap { position: relative; }
+  </style>
+
+  <h2>What the uncertainty actually looks like</h2>
+  <p class="lede">
+    Every estimator here reports a standard error, and how it gets one depends on
+    what the smoother <em>is</em>. Linear smoothers have an exact operator, so the
+    variance is closed-form; the rest are bootstrapped; Gaussian processes are asked
+    for their own posterior. Move the smoothing slider and watch the band trade
+    width for bias.
+  </p>
+
+  <div class="controls">
+    <div class="field">
+      <label for="ex-series">Series</label>
+      <select id="ex-series"></select>
+    </div>
+    <div class="field">
+      <label for="ex-method">Method</label>
+      <select id="ex-method"></select>
+    </div>
+    <div class="field">
+      <label for="ex-scale">Smoothing <span id="ex-scale-val"></span></label>
+      <input type="range" id="ex-scale" min="0" max="4" step="1" value="1">
+    </div>
+    <div class="field">
+      <label>Show</label>
+      <div class="chips">
+        <button class="chip" id="ex-unc" aria-pressed="true">Uncertainty</button>
+        <button class="chip" id="ex-ar" aria-pressed="false">AR(1) noise</button>
+        <button class="chip" id="ex-bias" aria-pressed="false">Bias-corrected</button>
+        <button class="chip" id="ex-sim" aria-pressed="false">Whole-curve band</button>
+        <button class="chip" id="ex-table" aria-pressed="false">Table</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Observed series and the smooth</h3>
+    <p class="sub" id="ex-note"></p>
+    <div class="plotwrap"><div id="ex-tip1" class="tip"></div><svg id="ex-top"></svg></div>
+  </div>
+
+  <div class="panel">
+    <h3>Estimated slope, per unit time</h3>
+    <p class="sub">A trend is credible where the band clears the zero line. The band flares at both ends because a smoother has data on one side only there.</p>
+    <div class="legend" id="ex-legend"></div>
+    <div class="plotwrap"><div id="ex-tip2" class="tip"></div><svg id="ex-bot"></svg></div>
+  </div>
+
+  <div class="readout" id="ex-readout"></div>
+  <div class="panel tablewrap" id="ex-tablewrap" hidden>
+    <table id="ex-table-el"></table>
+  </div>
+</div>
+
+<script id="explorer-data" type="application/json">__DATA__</script>
+<script>
+(function () {
+  const DATA = JSON.parse(document.getElementById("explorer-data").textContent);
+  const $ = (id) => document.getElementById(id);
+  const NS = "http://www.w3.org/2000/svg";
+
+  const state = {
+    series: "smooth", method: "sgolay", scale: 1,
+    uncertainty: true, ar1: false, bias: false, simultaneous: false, table: false,
+  };
+
+  const seriesSel = $("ex-series");
+  for (const [key, spec] of Object.entries(DATA.series)) {
+    seriesSel.add(new Option(spec.label, key));
+  }
+  const methodSel = $("ex-method");
+  for (const [key, spec] of Object.entries(DATA.methods)) {
+    methodSel.add(new Option(spec.label, key));
+  }
+
+  const css = (name) =>
+    getComputedStyle($("explorer")).getPropertyValue(name).trim();
+
+  function el(tag, attrs) {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    return node;
+  }
+
+  function niceTicks(lo, hi, count) {
+    const span = hi - lo || 1;
+    const raw = span / count;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].find((m) => m * mag >= raw) * mag;
+    const out = [];
+    for (let t = Math.ceil(lo / step) * step; t <= hi + 1e-9; t += step) out.push(t);
+    return out;
+  }
+
+  function fmt(v) {
+    if (!isFinite(v)) return "&ndash;";
+    const a = Math.abs(v);
+    if (a === 0) return "0";
+    if (a < 0.001 || a >= 100000) return v.toExponential(1);
+    return v.toFixed(a < 1 ? 3 : 2);
+  }
+
+  // Geometry shared by both panels so the x-axes line up exactly.
+  const M = { top: 10, right: 14, bottom: 26, left: 52 };
+  const W = 760;
+
+  function draw(svg, height, layers, yLabel, tipEl, tipRows) {
+    svg.setAttribute("viewBox", `0 0 ${W} ${height}`);
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const x = DATA.x;
+    const iw = W - M.left - M.right;
+    const ih = height - M.top - M.bottom;
+
+    // Layers carry their numbers under different names: a line has `values`,
+    // a band has `upper`/`lower`, and the zero rule has none but must be in view.
+    let lo = Infinity, hi = -Infinity;
+    for (const layer of layers) {
+      if (layer.kind === "zero") {
+        lo = Math.min(lo, 0); hi = Math.max(hi, 0);
+        continue;
+      }
+      for (const arr of [layer.values, layer.upper, layer.lower]) {
+        if (!arr) continue;
+        for (const v of arr) {
+          if (isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+        }
+      }
+    }
+    if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 1; }
+    if (lo === hi) { lo -= 0.5; hi += 0.5; }
+    const pad = (hi - lo) * 0.08 || 1;
+    lo -= pad; hi += pad;
+
+    const sx = (v) => M.left + ((v - x[0]) / (x[x.length - 1] - x[0])) * iw;
+    const sy = (v) => M.top + ih - ((v - lo) / (hi - lo)) * ih;
+
+    for (const t of niceTicks(lo, hi, 4)) {
+      const yy = sy(t);
+      svg.appendChild(el("line", {
+        x1: M.left, x2: W - M.right, y1: yy, y2: yy,
+        stroke: css("--grid"), "stroke-width": 1,
+      }));
+      const label = el("text", {
+        x: M.left - 7, y: yy + 3.5, "text-anchor": "end",
+        fill: css("--muted"), "font-size": 10,
+      });
+      label.textContent = fmt(t);
+      svg.appendChild(label);
+    }
+    for (const t of niceTicks(x[0], x[x.length - 1], 6)) {
+      const label = el("text", {
+        x: sx(t), y: height - 8, "text-anchor": "middle",
+        fill: css("--muted"), "font-size": 10,
+      });
+      label.textContent = String(Math.round(t));
+      svg.appendChild(label);
+    }
+    svg.appendChild(el("line", {
+      x1: M.left, x2: W - M.right, y1: M.top + ih, y2: M.top + ih,
+      stroke: css("--baseline"), "stroke-width": 1,
+    }));
+
+    for (const layer of layers) {
+      if (layer.kind === "band") {
+        let d = "";
+        const pts = [];
+        for (let i = 0; i < x.length; i++) {
+          if (isFinite(layer.upper[i]) && isFinite(layer.lower[i])) {
+            pts.push(i);
+          }
+        }
+        if (!pts.length) continue;
+        d = pts.map((i, k) => `${k ? "L" : "M"}${sx(x[i])},${sy(layer.upper[i])}`).join("");
+        d += pts.slice().reverse()
+          .map((i) => `L${sx(x[i])},${sy(layer.lower[i])}`).join("") + "Z";
+        svg.appendChild(el("path", {
+          d, fill: layer.color, "fill-opacity": layer.opacity ?? 0.18, stroke: "none",
+        }));
+      } else if (layer.kind === "line") {
+        let d = "", open = false;
+        for (let i = 0; i < x.length; i++) {
+          const v = layer.values[i];
+          if (!isFinite(v)) { open = false; continue; }
+          d += `${open ? "L" : "M"}${sx(x[i])},${sy(v)}`;
+          open = true;
+        }
+        svg.appendChild(el("path", {
+          d, fill: "none", stroke: layer.color, "stroke-width": layer.width ?? 2,
+          "stroke-linejoin": "round", "stroke-linecap": "round",
+          "stroke-dasharray": layer.dash ?? "none",
+        }));
+      } else if (layer.kind === "dots") {
+        for (let i = 0; i < x.length; i++) {
+          if (!isFinite(layer.values[i])) continue;
+          svg.appendChild(el("circle", {
+            cx: sx(x[i]), cy: sy(layer.values[i]), r: 1.9,
+            fill: layer.color, "fill-opacity": 0.55,
+          }));
+        }
+      } else if (layer.kind === "zero") {
+        if (lo <= 0 && hi >= 0) {
+          svg.appendChild(el("line", {
+            x1: M.left, x2: W - M.right, y1: sy(0), y2: sy(0),
+            stroke: css("--text-secondary"), "stroke-width": 1.5,
+          }));
+        }
+      }
+    }
+
+    // Crosshair + tooltip.
+    const hair = el("line", {
+      x1: 0, x2: 0, y1: M.top, y2: M.top + ih,
+      stroke: css("--muted"), "stroke-width": 1, opacity: 0,
+    });
+    svg.appendChild(hair);
+    const hit = el("rect", {
+      x: M.left, y: M.top, width: iw, height: ih, fill: "transparent",
+    });
+    svg.appendChild(hit);
+
+    hit.addEventListener("pointerleave", () => {
+      hair.setAttribute("opacity", 0);
+      tipEl.style.opacity = 0;
+    });
+    hit.addEventListener("pointermove", (event) => {
+      const box = svg.getBoundingClientRect();
+      const px = ((event.clientX - box.left) / box.width) * W;
+      const frac = (px - M.left) / iw;
+      const i = Math.max(0, Math.min(x.length - 1, Math.round(frac * (x.length - 1))));
+      hair.setAttribute("opacity", 1);
+      hair.setAttribute("x1", sx(x[i]));
+      hair.setAttribute("x2", sx(x[i]));
+      tipEl.innerHTML = tipRows(i);
+      tipEl.style.opacity = 1;
+      const left = (sx(x[i]) / W) * box.width;
+      tipEl.style.left = `${Math.min(Math.max(left + 10, 0), box.width - 150)}px`;
+      tipEl.style.top = `8px`;
+    });
+  }
+
+  function current() {
+    return DATA.panels[`${state.series}|${state.method}|${state.scale}`];
+  }
+
+  function render() {
+    const spec = DATA.series[state.series];
+    const panel = current();
+    const method = DATA.methods[state.method];
+    const useBias = state.bias && panel.bc_derivative !== null;
+
+    const derivative = useBias ? panel.bc_derivative : panel.derivative;
+    let se = useBias ? panel.bc_se : (state.ar1 ? panel.se_ar1 : panel.se_iid);
+    let mult = 1.959963985;
+    const wholeCurve = Boolean(state.simultaneous && panel.simultaneous_multiplier);
+    if (wholeCurve) mult = panel.simultaneous_multiplier;
+
+    seriesSel.value = state.series;
+    methodSel.value = state.method;
+    $("ex-scale").value = String(state.scale);
+    for (const [id, key] of [["ex-unc", "uncertainty"], ["ex-ar", "ar1"],
+                             ["ex-bias", "bias"], ["ex-sim", "simultaneous"],
+                             ["ex-table", "table"]]) {
+      $(id).setAttribute("aria-pressed", String(state[key]));
+    }
+    $("ex-note").textContent = spec.note;
+    $("ex-scale-val").textContent = `(${DATA.scales[state.scale]})`;
+    $("ex-bias").disabled = panel.bc_derivative === null;
+    $("ex-sim").disabled = panel.simultaneous_multiplier === null;
+
+    // Top panel: observations and the smooth.
+    draw($("ex-top"), 210, [
+      { kind: "dots", values: spec.y, color: css("--muted") },
+      { kind: "line", values: panel.smoothed, color: css("--series-1") },
+    ], "value", $("ex-tip1"), (i) =>
+      `<strong>t = ${Math.round(DATA.x[i])}</strong><br>` +
+      `observed ${fmt(spec.y[i])}<br>smooth ${fmt(panel.smoothed[i])}`);
+
+    // Bottom panel: the slope and its band.
+    const layers = [{ kind: "zero" }];
+    const legend = [];
+    if (state.uncertainty) {
+      const upper = derivative.map((d, i) => d + mult * se[i]);
+      const lower = derivative.map((d, i) => d - mult * se[i]);
+      layers.push({
+        kind: "band", upper, lower, color: css("--series-1"), opacity: 0.2,
+      });
+      legend.push([css("--series-1"),
+        `${wholeCurve ? "whole-curve" : "95% pointwise"} band` +
+        `${state.ar1 ? ", AR(1) noise" : ""}`, true]);
+      if (state.ar1) {
+        const iidUpper = derivative.map((d, i) => d + mult * panel.se_iid[i]);
+        const iidLower = derivative.map((d, i) => d - mult * panel.se_iid[i]);
+        layers.push({
+          kind: "line", values: iidUpper, color: css("--series-2"),
+          width: 1.5, dash: "none",
+        });
+        layers.push({
+          kind: "line", values: iidLower, color: css("--series-2"),
+          width: 1.5, dash: "none",
+        });
+        legend.push([css("--series-2"), "same band assuming independence"]);
+      }
+    }
+    layers.push({ kind: "line", values: derivative, color: css("--series-1") });
+    legend.push([css("--series-1"), useBias ? "slope, bias-corrected" : "slope"]);
+    if (spec.truth) {
+      layers.push({
+        kind: "line", values: spec.truth, color: css("--text-secondary"),
+        width: 1.5, dash: "4 3",
+      });
+      legend.push([css("--text-secondary"), "true slope"]);
+    }
+
+    $("ex-legend").innerHTML = legend.map(([c, t, faint]) =>
+      `<span><i class="swatch" style="background:${c};opacity:${faint ? 0.35 : 1}"></i>` +
+      `${t}</span>`).join("");
+
+    draw($("ex-bot"), 230, layers, "slope", $("ex-tip2"), (i) => {
+      const d = derivative[i], s = se[i];
+      const clears = isFinite(s) && (d - mult * s > 0 || d + mult * s < 0);
+      return `<strong>t = ${Math.round(DATA.x[i])}</strong><br>` +
+        `slope ${fmt(d)}<br>se ${fmt(s)}<br>` +
+        `${clears ? "clears zero" : "consistent with no trend"}`;
+    });
+
+    const median = (a) => {
+      const v = a.filter(isFinite).slice().sort((p, q) => p - q);
+      return v.length ? v[Math.floor(v.length / 2)] : NaN;
+    };
+    const sig = derivative.filter((d, i) =>
+      isFinite(se[i]) && (d - mult * se[i] > 0 || d + mult * se[i] < 0)).length;
+    $("ex-readout").innerHTML =
+      `<code>se_method: ${panel.se_method}</code> &mdash; ` +
+      `${method.linear
+        ? "a linear smoother, so this variance is exact rather than estimated."
+        : "not a linear smoother, so the sampling distribution is simulated."}` +
+      `<br>Median standard error <code>${fmt(median(se))}</code>, and ` +
+      `<strong>${sig}</strong> of ${derivative.length} points have an interval ` +
+      `that excludes zero` +
+      (wholeCurve
+        ? `, at whole-curve confidence &mdash; multiplier ${fmt(mult)} against 1.96 pointwise.`
+        : ".") +
+      (useBias ? " Bias correction re-centers the estimate and widens the band &mdash; that is the trade." : "");
+
+    $("ex-tablewrap").hidden = !state.table;
+    if (state.table) {
+      const rows = [];
+      rows.push("<tr><th>t</th><th>observed</th><th>smooth</th><th>slope</th><th>se</th><th>lower</th><th>upper</th></tr>");
+      for (let i = 0; i < DATA.x.length; i += 2) {
+        rows.push(`<tr><td>${Math.round(DATA.x[i])}</td><td>${fmt(spec.y[i])}</td>` +
+          `<td>${fmt(panel.smoothed[i])}</td><td>${fmt(derivative[i])}</td>` +
+          `<td>${fmt(se[i])}</td><td>${fmt(derivative[i] - mult * se[i])}</td>` +
+          `<td>${fmt(derivative[i] + mult * se[i])}</td></tr>`);
+      }
+      $("ex-table-el").innerHTML = rows.join("");
+    }
+  }
+
+  seriesSel.addEventListener("change", (e) => { state.series = e.target.value; render(); });
+  methodSel.addEventListener("change", (e) => { state.method = e.target.value; render(); });
+  $("ex-scale").addEventListener("input", (e) => {
+    state.scale = Number(e.target.value); render();
+  });
+  const toggle = (id, key) => $(id).addEventListener("click", () => {
+    state[key] = !state[key];
+    $(id).setAttribute("aria-pressed", String(state[key]));
+    render();
+  });
+  toggle("ex-unc", "uncertainty");
+  toggle("ex-ar", "ar1");
+  toggle("ex-bias", "bias");
+  toggle("ex-sim", "simultaneous");
+  toggle("ex-table", "table");
+
+  const repaint = () => render();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", repaint);
+  new MutationObserver(repaint).observe(document.documentElement, {
+    attributes: true, attributeFilter: ["data-theme"],
+  });
+
+  render();
+})();
+</script>

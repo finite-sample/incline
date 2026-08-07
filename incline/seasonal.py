@@ -1,33 +1,81 @@
-"""Seasonal decomposition and detrending for trend estimation.
+"""Removing a seasonal cycle before estimating a trend.
 
-This module provides tools for separating seasonal components from time series
-before trend estimation, which is crucial for obtaining meaningful derivatives
-in data with strong seasonal patterns.
+Seasonality is a preprocessing concern, not an estimation one. :func:`deseasonalize`
+takes a frame and returns a frame, so the result composes with every smoother and
+every uncertainty option in the package -- including ones added later, which is
+the part that matters.
+
+The previous design instead made seasonality an *estimator*, and paid for it
+twice. ``trend_with_deseasonalization`` carried two copies of a string-to-method
+dispatch chain, so every new smoother had to be added to both. Worse, the two
+chains returned **different schemas**: the early-return path emitted
+``derivative_value`` while the main path emitted ``trend_derivative_value``, so
+what a caller had to index depended on whether seasonality happened to be
+detected. Both problems disappear once there is nothing to dispatch on.
+
+What a deseasonalized interval means
+------------------------------------
+The seasonal component is estimated from the same data as the trend, so an
+interval that treats it as known is too narrow -- measured on a linear trend
+with a twelve-period cycle, a nominal 95% interval covers 0.917.
+:func:`trend_with_deseasonalization` therefore bootstraps the whole pipeline
+whenever a standard error is asked for, which brings coverage to 0.983. That is
+the default because there is no good reason to hand back a number we know is
+wrong; the cheap alternative is one line of explicit composition.
 """
 
+from __future__ import annotations
+
 import warnings
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
+from scipy import signal
+from scipy.fft import fft, fftfreq
+from statsmodels.tsa.seasonal import STL
+from statsmodels.tsa.stattools import acf
 
 
-# Check for optional dependencies
-try:
-    from statsmodels.tsa.seasonal import STL
-    from statsmodels.tsa.stattools import acf
+if TYPE_CHECKING:
+    from .smoothers import Smoother
 
-    HAS_STATSMODELS = True
-except ImportError:
-    HAS_STATSMODELS = False
+# Columns every decomposition emits, whichever route produced it.
+DECOMPOSITION_COLUMNS = (
+    "trend_component",
+    "seasonal_component",
+    "residual_component",
+    "deseasonalized",
+    "period",
+    "decomposition_method",
+)
 
-try:
-    from scipy import signal
-    from scipy.fft import fft, fftfreq
+# Autocorrelation at a candidate lag above which a cycle is called real.
+ACF_THRESHOLD = 0.3
+# Share of spectral power a frequency must hold to count as dominant.
+SPECTRAL_THRESHOLD = 0.1
+# Fraction of variance a candidate period must remove.
+VARIANCE_THRESHOLD = 0.3
 
-    HAS_SCIPY_SIGNAL = True
-except ImportError:
-    HAS_SCIPY_SIGNAL = False
+
+@dataclass(frozen=True)
+class Seasonality:
+    """What was found when looking for a cycle.
+
+    Attributes:
+        seasonal: Whether a cycle was detected.
+        period: Its length in observations, or None.
+        strength: How pronounced it is, roughly on 0-1.
+        method: Which detector fired: ``'autocorrelation'``, ``'spectral'``,
+            ``'variance'`` or ``'none'``.
+    """
+
+    seasonal: bool
+    period: int | None
+    strength: float
+    method: str
 
 
 def detect_seasonality(
@@ -35,133 +83,152 @@ def detect_seasonality(
     column_value: str = "value",
     time_column: str | None = None,
     max_period: int | None = None,
-) -> dict[str, Any]:
-    """Detect seasonal patterns in time series data.
+) -> Seasonality:
+    """Look for a repeating cycle, by three methods in decreasing reliability.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Time series data
-    column_value : str
-        Value column name
-    time_column : str, optional
-        Time column name
-    max_period : int, optional
-        Maximum period to search for seasonality
+    Args:
+        df: Time series data.
+        column_value: Column holding the values.
+        time_column: Unused; accepted so the signature matches its neighbors.
+        max_period: Longest cycle to consider.
 
     Returns:
-    -------
-    dict
-        Dictionary with seasonality information:
-        - 'seasonal': bool, whether seasonality detected
-        - 'period': int, estimated seasonal period
-        - 'strength': float, strength of seasonality (0-1)
-        - 'method': str, detection method used
+        What was found.
     """
+    del time_column
     y = np.asarray(df[column_value], dtype=float)
+    y = y[np.isfinite(y)]
     n = len(y)
+    if n < 8:
+        return Seasonality(False, None, 0.0, "none")
 
     if max_period is None:
-        max_period = min(n // 3, 365)  # Up to yearly for daily data
+        max_period = min(n // 3, 365)
+    max_period = max(max_period, 2)
 
-    # Method 1: Autocorrelation-based detection
-    if HAS_STATSMODELS and n > 2 * max_period:
-        try:
-            # Compute autocorrelation function
-            autocorr = acf(y, nlags=max_period, fft=True)
+    found = _detect_by_autocorrelation(y, n, max_period)
+    if found is not None:
+        return found
+    found = _detect_by_spectrum(y, n, max_period)
+    if found is not None:
+        return found
+    found = _detect_by_variance(y, n, max_period)
+    if found is not None:
+        return found
+    return Seasonality(False, None, 0.0, "none")
 
-            # Find peaks in autocorrelation (excluding lag 0)
-            peaks = []
-            for lag in range(2, len(autocorr)):
-                if (
-                    lag < len(autocorr) - 1
-                    and autocorr[lag] > autocorr[lag - 1]
-                    and autocorr[lag] > autocorr[lag + 1]
-                    and autocorr[lag] > 0.3
-                ):  # Threshold for significance
-                    peaks.append((lag, autocorr[lag]))
 
-            if peaks:
-                # Take the strongest peak
-                best_period, strength = max(peaks, key=lambda x: x[1])
-                return {
-                    "seasonal": True,
-                    "period": best_period,
-                    "strength": strength,
-                    "method": "autocorrelation",
-                }
-        except Exception as e:
-            warnings.warn(
-                f"Autocorrelation seasonality detection failed: {e}", stacklevel=2
+def _detect_by_autocorrelation(
+    y: npt.NDArray[np.float64], n: int, max_period: int
+) -> Seasonality | None:
+    """Strongest interior peak of the autocorrelation function."""
+    if n <= 2 * max_period:
+        return None
+    try:
+        correlation = acf(y, nlags=max_period, fft=True)
+    except Exception as exc:  # a failed detector should not abort the search
+        warnings.warn(f"Autocorrelation seasonality check failed: {exc}", stacklevel=3)
+        return None
+
+    peaks = [
+        (lag, correlation[lag])
+        for lag in range(2, len(correlation) - 1)
+        if correlation[lag] > correlation[lag - 1]
+        and correlation[lag] > correlation[lag + 1]
+        and correlation[lag] > ACF_THRESHOLD
+    ]
+    if not peaks:
+        return None
+    period, strength = max(peaks, key=lambda pair: pair[1])
+    return Seasonality(True, int(period), float(strength), "autocorrelation")
+
+
+def _detect_by_spectrum(
+    y: npt.NDArray[np.float64], n: int, max_period: int
+) -> Seasonality | None:
+    """Dominant frequency of the detrended series."""
+    if n <= 20:
+        return None
+    try:
+        spectrum = np.abs(fft(signal.detrend(y))[1 : n // 2])
+        frequencies = fftfreq(n)
+        if spectrum.size == 0:
+            return None
+        peak = int(np.argmax(spectrum)) + 1
+        if frequencies[peak] <= 0:
+            return None
+        period = int(1 / frequencies[peak])
+        total = float(np.sum(spectrum))
+        if total <= 0 or not 2 <= period <= max_period:
+            return None
+        strength = float(spectrum[peak - 1] / total)
+    except Exception as exc:
+        warnings.warn(f"Spectral seasonality check failed: {exc}", stacklevel=3)
+        return None
+
+    if strength <= SPECTRAL_THRESHOLD:
+        return None
+    return Seasonality(True, period, strength, "spectral")
+
+
+def _detect_by_variance(
+    y: npt.NDArray[np.float64], n: int, max_period: int
+) -> Seasonality | None:
+    """The period that best reduces within-phase variance."""
+    total_variance = float(np.var(y))
+    if total_variance <= 0:
+        return None
+
+    best_period, best_reduction = None, 0.0
+    for period in range(2, min(max_period + 1, max(3, n // 3))):
+        groups = [y[i::period] for i in range(period)]
+        within = float(
+            np.mean(
+                [
+                    np.var(group) if len(group) > 1 else total_variance
+                    for group in groups
+                ]
             )
+        )
+        reduction = 1 - within / total_variance
+        if reduction > best_reduction:
+            best_period, best_reduction = period, reduction
 
-    # Method 2: FFT-based spectral analysis
-    if HAS_SCIPY_SIGNAL and n > 20:
-        try:
-            # Remove trend first
-            y_detrended = signal.detrend(y)
+    if best_reduction <= VARIANCE_THRESHOLD or best_period is None:
+        return None
+    return Seasonality(True, best_period, best_reduction, "variance")
 
-            # Apply FFT
-            fft_vals = fft(y_detrended)
-            freqs = fftfreq(n)
 
-            # Find dominant frequency (excluding DC component)
-            power = np.abs(fft_vals[1 : n // 2])
-            max_freq_idx = np.argmax(power) + 1
+def _resolve_period(
+    df: pd.DataFrame, column_value: str, period: int | None, n: int
+) -> int:
+    """Settle on a period, detecting one when not told."""
+    if period is not None:
+        return period
+    found = detect_seasonality(df, column_value)
+    if found.seasonal and found.period is not None:
+        return found.period
+    return min(12, max(2, n // 4))
 
-            if freqs[max_freq_idx] > 0:
-                period = int(1 / freqs[max_freq_idx])
-                if 2 <= period <= max_period:
-                    # Estimate strength from relative power
-                    total_power = np.sum(power)
-                    peak_power = power[max_freq_idx - 1]
-                    strength = peak_power / total_power
 
-                    if strength > 0.1:  # Threshold for significance
-                        return {
-                            "seasonal": True,
-                            "period": period,
-                            "strength": strength,
-                            "method": "fft",
-                        }
-        except Exception as e:
-            warnings.warn(f"FFT seasonality detection failed: {e}", stacklevel=2)
-
-    # Method 3: Simple variance-based detection
-    # Check if grouping by potential periods reduces variance
-    best_reduction = 0
-    best_period_var: int | None = None
-    original_var = np.var(y)
-
-    for period in range(2, min(max_period + 1, n // 3)):
-        try:
-            # Group by period and compute within-group variance
-            groups = [y[i::period] for i in range(period)]
-            within_var = np.mean(
-                [np.var(group) if len(group) > 1 else original_var for group in groups]
-            )
-            variance_reduction = 1 - within_var / original_var
-
-            if variance_reduction > best_reduction:
-                best_reduction = variance_reduction
-                best_period_var = period
-        except Exception as e:
-            warnings.warn(
-                f"Variance-based seasonality check failed for period {period}: {e}",
-                stacklevel=2,
-            )
-            continue
-
-    if best_reduction > 0.3:  # Threshold for significance
-        return {
-            "seasonal": True,
-            "period": best_period_var,
-            "strength": best_reduction,
-            "method": "variance",
-        }
-
-    # No significant seasonality detected
-    return {"seasonal": False, "period": None, "strength": 0.0, "method": "none"}
+def _assemble(
+    df: pd.DataFrame,
+    trend: npt.NDArray[np.float64],
+    seasonal: npt.NDArray[np.float64],
+    residual: npt.NDArray[np.float64],
+    deseasonalized: npt.NDArray[np.float64],
+    period: int,
+    method: str,
+) -> pd.DataFrame:
+    """Attach the one decomposition schema to a copy of the input."""
+    out = df.copy()
+    out["trend_component"] = trend
+    out["seasonal_component"] = seasonal
+    out["residual_component"] = residual
+    out["deseasonalized"] = deseasonalized
+    out["period"] = period
+    out["decomposition_method"] = method
+    return out
 
 
 def stl_decompose(
@@ -173,402 +240,392 @@ def stl_decompose(
     trend: int | None = None,
     robust: bool = True,
 ) -> pd.DataFrame:
-    """Perform STL (Seasonal and Trend decomposition using Loess) decomposition.
+    """Seasonal-trend decomposition by LOESS.
 
-    STL is a versatile and robust method for decomposing time series into
-    seasonal, trend, and remainder components.
+    Falls back to :func:`moving_average_decompose` when the period is unusable
+    or STL raises. The fallback returns the same schema, so callers never have
+    to ask which route ran.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Time series data
-    column_value : str
-        Value column name
-    time_column : str, optional
-        Time column name
-    period : int, optional
-        Seasonal period (auto-detected if None)
-    seasonal : int
-        Length of seasonal smoother (odd number)
-    trend : int, optional
-        Length of trend smoother
-    robust : bool
-        Use robust fitting
+    Args:
+        df: Time series data.
+        column_value: Column holding the values.
+        time_column: Unused; kept for signature symmetry.
+        period: Cycle length. Detected when None.
+        seasonal: Length of the seasonal smoother; forced odd.
+        trend: Length of the trend smoother; derived when None.
+        robust: Downweight outliers.
 
     Returns:
-    -------
-    pd.DataFrame
-        Original data plus trend, seasonal, and residual components
+        The frame plus :data:`DECOMPOSITION_COLUMNS`.
     """
-    if not HAS_STATSMODELS:
-        raise ImportError(
-            "statsmodels is required for STL decomposition. "
-            "Install with: pip install statsmodels"
-        )
-
     y = np.asarray(df[column_value], dtype=float)
     n = len(y)
-
-    # Auto-detect period if not provided
-    if period is None:
-        seasonality_info = detect_seasonality(df, column_value, time_column)
-        if seasonality_info["seasonal"]:
-            period = seasonality_info["period"]
-        else:
-            # Assume no strong seasonality, use a default
-            period = min(12, n // 4)  # Monthly for shorter series
+    period = _resolve_period(df, column_value, period, n)
 
     if period < 2 or period >= n // 2:
         warnings.warn(
-            f"Invalid period {period}, using simple trend estimation", stacklevel=2
+            f"Period {period} is unusable for a series of {n} points; "
+            f"falling back to a moving-average decomposition.",
+            stacklevel=2,
         )
-        # Fall back to the simple decomposition. It must still return a
-        # decomposition-shaped frame (with 'deseasonalized' etc.); returning
-        # spline_trend() here produced a frame whose callers then KeyError'd.
-        return simple_deseasonalize(df, column_value, time_column, period)
+        return moving_average_decompose(df, column_value, time_column, period)
 
-    # Ensure seasonal smoother is appropriate
     if seasonal % 2 == 0:
         seasonal += 1
     seasonal = max(seasonal, period + (period % 2 == 0))
-
-    # Set trend smoother if not provided
     if trend is None:
         trend = int(1.5 * period / (1 - 1.5 / seasonal))
         if trend % 2 == 0:
             trend += 1
 
     try:
-        # Create pandas Series with appropriate index
-        if isinstance(df.index, pd.DatetimeIndex):
-            ts = pd.Series(y, index=df.index)
-        else:
-            ts = pd.Series(y)
-
-        # Perform STL decomposition
-        stl = STL(ts, seasonal=seasonal, trend=trend, period=period, robust=robust)
-        decomposition = stl.fit()
-
-        # Create output dataframe
-        odf = df.copy()
-        odf["trend_component"] = decomposition.trend.values
-        odf["seasonal_component"] = decomposition.seasonal.values
-        odf["residual_component"] = decomposition.resid.values
-        odf["deseasonalized"] = decomposition.trend.values + decomposition.resid.values
-
-        # Add decomposition metadata
-        odf["period"] = period
-        odf["decomposition_method"] = "stl"
-
-        return odf
-
-    except Exception as e:
-        warnings.warn(
-            f"STL decomposition failed: {e}, using fallback method", stacklevel=2
+        series = (
+            pd.Series(y, index=df.index)
+            if isinstance(df.index, pd.DatetimeIndex)
+            else pd.Series(y)
         )
-        return simple_deseasonalize(df, column_value, time_column, period)
+        fitted = STL(
+            series, seasonal=seasonal, trend=trend, period=period, robust=robust
+        ).fit()
+    except Exception as exc:
+        warnings.warn(
+            f"STL decomposition failed ({exc}); falling back to a "
+            f"moving-average decomposition.",
+            stacklevel=2,
+        )
+        return moving_average_decompose(df, column_value, time_column, period)
+
+    trend_values = np.asarray(fitted.trend, dtype=float)
+    seasonal_values = np.asarray(fitted.seasonal, dtype=float)
+    residual_values = np.asarray(fitted.resid, dtype=float)
+    return _assemble(
+        df,
+        trend_values,
+        seasonal_values,
+        residual_values,
+        trend_values + residual_values,
+        period,
+        "stl",
+    )
 
 
-def simple_deseasonalize(
+def moving_average_decompose(
     df: pd.DataFrame,
     column_value: str = "value",
     time_column: str | None = None,
     period: int | None = None,
 ) -> pd.DataFrame:
-    """Simple seasonal adjustment using moving averages.
+    """Classical decomposition by a centered moving average.
 
-    This is a fallback method when statsmodels is not available or
-    STL decomposition fails.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Time series data
-    column_value : str
-        Value column name
-    time_column : str, optional
-        Time column name
-    period : int, optional
-        Seasonal period (auto-detected if None)
+    Args:
+        df: Time series data.
+        column_value: Column holding the values.
+        time_column: Unused; kept for signature symmetry.
+        period: Cycle length. Detected when None.
 
     Returns:
-    -------
-    pd.DataFrame
-        Original data plus deseasonalized components
+        The frame plus :data:`DECOMPOSITION_COLUMNS`.
     """
+    del time_column
     y = np.asarray(df[column_value], dtype=float)
     n = len(y)
-
-    # Auto-detect period if not provided
-    if period is None:
-        seasonality_info = detect_seasonality(df, column_value, time_column)
-        if seasonality_info["seasonal"]:
-            period = seasonality_info["period"]
-        else:
-            period = min(12, n // 4)
+    period = _resolve_period(df, column_value, period, n)
 
     if period < 2 or period >= n // 2:
-        # No meaningful seasonality
-        odf = df.copy()
-        odf["trend_component"] = y
-        odf["seasonal_component"] = np.zeros(n)
-        odf["residual_component"] = np.zeros(n)
-        odf["deseasonalized"] = y
-        odf["period"] = period
-        odf["decomposition_method"] = "none"
-        return odf
+        zeros = np.zeros(n)
+        return _assemble(df, y, zeros, zeros, y, period, "none")
 
-    # Estimate trend using centered moving average
-    window = period
-    if window % 2 == 0:
-        # For even periods, use weighted average
+    trend = _centred_average(y, period, n)
+    detrended = y - trend
+
+    seasonal = np.zeros(n)
+    for phase in range(period):
+        positions = np.arange(phase, n, period)
+        if positions.size:
+            seasonal[positions] = np.nanmean(detrended[positions])
+    # Center the seasonal profile so it carries no level.
+    seasonal -= np.nanmean(seasonal)
+
+    return _assemble(
+        df, trend, seasonal, y - trend - seasonal, y - seasonal, period, "simple"
+    )
+
+
+def _centred_average(
+    y: npt.NDArray[np.float64], period: int, n: int
+) -> npt.NDArray[np.float64]:
+    """Centered moving average, half-weighting the ends for even periods."""
+    half = period // 2
+    if period % 2 == 0:
         trend = np.full(n, np.nan)
-        half_window = window // 2
-
-        for i in range(half_window, n - half_window):
-            # Weighted moving average for even periods
-            start_idx = i - half_window
-            end_idx = i + half_window
-            data_slice = y[start_idx : end_idx + 1]
-            weights = np.ones(len(data_slice))
+        for i in range(half, n - half):
+            window = y[i - half : i + half + 1]
+            weights = np.ones(len(window))
             weights[0] = weights[-1] = 0.5
-            trend[i] = np.average(data_slice, weights=weights)
+            trend[i] = np.average(window, weights=weights)
     else:
-        # Simple centered moving average for odd periods. ``.values`` can be a
-        # read-only view (pandas 3.x), so copy before writing the edges.
+        # ``.to_numpy()`` can hand back a read-only view under pandas 3, and the
+        # edge fill below writes into this array.
         trend = np.asarray(
-            pd.Series(y).rolling(window=window, center=True).mean().to_numpy(),
+            pd.Series(y).rolling(window=period, center=True).mean().to_numpy(),
             dtype=float,
         ).copy()
 
-    # Fill in missing trend values at edges with the nearest computed value.
-    # The tail must read index -(period//2)-1: index -(period//2) is the first
-    # element of the still-unfilled slice being assigned, so reading it would
-    # propagate NaN across the whole tail.
-    half = period // 2
     if half > 0:
+        # The tail reads -half-1, not -half: index -half is the first element of
+        # the slice being assigned, so reading it propagates NaN across the tail.
         trend[:half] = trend[half]
         trend[-half:] = trend[-half - 1]
+    return trend
 
-    # Estimate seasonal component
-    detrended = y - trend
-    seasonal = np.zeros(n)
 
-    # Average each seasonal position
-    for season_idx in range(period):
-        indices = np.arange(season_idx, n, period)
-        if len(indices) > 0:
-            seasonal_mean = np.nanmean(detrended[indices])
-            seasonal[indices] = seasonal_mean
+def deseasonalize(
+    df: pd.DataFrame,
+    column_value: str = "value",
+    time_column: str | None = None,
+    method: str = "auto",
+    period: int | None = None,
+) -> pd.DataFrame:
+    """Split a series into trend, cycle and remainder.
 
-    # Ensure seasonal component sums to zero over each period
-    for start_idx in range(0, n - period + 1, period):
-        end_idx = start_idx + period
-        seasonal_period = seasonal[start_idx:end_idx]
-        adjustment = np.mean(seasonal_period)
-        seasonal[start_idx:end_idx] -= adjustment
+    The front door for seasonality. Returns a frame, so the result can be
+    handed to any estimator::
 
-    # Compute residuals
-    residual = y - trend - seasonal
-    deseasonalized = y - seasonal
+        clean = deseasonalize(df)
+        result = sgolay_trend(clean, column_value="deseasonalized", se=True)
 
-    # Create output dataframe
-    odf = df.copy()
-    odf["trend_component"] = trend
-    odf["seasonal_component"] = seasonal
-    odf["residual_component"] = residual
-    odf["deseasonalized"] = deseasonalized
-    odf["period"] = period
-    odf["decomposition_method"] = "simple"
+    Args:
+        df: Time series data.
+        column_value: Column holding the values.
+        time_column: Unused; kept for signature symmetry.
+        method: ``'auto'``, ``'stl'`` or ``'simple'``. ``'auto'`` uses STL when
+            a cycle is detected and leaves the series alone when none is.
+        period: Cycle length. Detected when None.
 
-    return odf
+    Returns:
+        The frame plus :data:`DECOMPOSITION_COLUMNS`, always the same columns
+        whichever route ran.
+
+    Raises:
+        ValueError: If the method is unknown.
+    """
+    match method:
+        case "stl":
+            return stl_decompose(df, column_value, time_column, period)
+        case "simple":
+            return moving_average_decompose(df, column_value, time_column, period)
+        case "auto":
+            pass
+        case _:
+            raise ValueError(
+                f"Unknown decomposition method {method!r}; "
+                f"use 'auto', 'stl' or 'simple'"
+            )
+
+    if period is None:
+        found = detect_seasonality(df, column_value)
+        if not found.seasonal:
+            # Nothing to remove. Still emit the full schema so that callers
+            # never branch on whether a cycle happened to be found.
+            y = np.asarray(df[column_value], dtype=float)
+            zeros = np.zeros(len(y))
+            return _assemble(df, y, zeros, zeros, y, 0, "none")
+        period = found.period
+
+    return stl_decompose(df, column_value, time_column, period)
 
 
 def trend_with_deseasonalization(
     df: pd.DataFrame,
+    smoother: Smoother | None = None,
     column_value: str = "value",
     time_column: str | None = None,
-    trend_method: str = "spline",
-    decomposition_method: str = "auto",
+    method: str = "auto",
     period: int | None = None,
-    **trend_kwargs,
+    n_bootstrap: int = 100,
+    random_state: int | np.random.Generator | None = None,
+    **fit_kwargs: Any,
 ) -> pd.DataFrame:
-    """Estimate trends after seasonal decomposition.
+    """Deseasonalize, then estimate the trend of what is left.
 
-    This function first removes seasonal components, then estimates trends
-    on the deseasonalized data. This produces more reliable trend estimates
-    for seasonal time series.
+    A convenience wrapper over ``estimate(smoother, deseasonalize(df))``. Takes a
+    :class:`~incline.smoothers.Smoother` rather than a method name, so it works
+    with every estimator without a dispatch table.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Time series data
-    column_value : str
-        Value column name
-    time_column : str, optional
-        Time column name
-    trend_method : str
-        Trend estimation method ('spline', 'sgolay', 'loess', etc.)
-    decomposition_method : str
-        Decomposition method ('auto', 'stl', 'simple')
-    period : int, optional
-        Seasonal period (auto-detected if None)
-    **trend_kwargs
-        Additional arguments for trend estimation
+    With ``se=True`` the uncertainty accounts for the seasonal fit as well as
+    the trend fit. It has to: the cycle was estimated from the same data, and
+    treating it as known makes the interval about 10% too narrow -- coverage
+    0.917 against a nominal 0.95. So the standard error comes from
+    bootstrapping the **whole pipeline**, resampling the decomposition's
+    residuals and redoing the decomposition and the trend fit together, which
+    brings coverage to 0.983.
+
+    That costs ``n_bootstrap`` decompositions, which is the price of an honest
+    number and is only paid when a standard error is asked for. If you want the
+    cheap interval that treats the adjusted series as data, compose the two
+    steps yourself::
+
+        adjusted = deseasonalize(df)
+        result = sgolay_trend(adjusted, column_value="deseasonalized", se=True)
+
+    which says plainly what it assumes.
+
+    Args:
+        df: Time series data.
+        smoother: Estimator to run. Penalized spline by default.
+        column_value: Column holding the values.
+        time_column: Numeric time column.
+        method: Decomposition method; see :func:`deseasonalize`.
+        period: Cycle length. Detected when None.
+        n_bootstrap: Replicates used to propagate the decomposition.
+        random_state: Seed or Generator for the bootstrap.
+        **fit_kwargs: Passed through to the estimator, e.g. ``se=True``.
 
     Returns:
-    -------
-    pd.DataFrame
-        Results with seasonal decomposition and trend estimates
+        The estimator's usual columns plus :data:`DECOMPOSITION_COLUMNS`. One
+        schema, whether or not a cycle was found.
     """
-    # First, check if seasonality exists
-    seasonality_info = detect_seasonality(df, column_value, time_column)
+    from .api import estimate
+    from .smoothers import PenalizedSpline
 
-    if not seasonality_info["seasonal"] and decomposition_method == "auto":
-        # No seasonality detected, proceed with direct trend estimation
-        from .advanced import estimate_trend, loess_trend
-        from .trend import sgolay_trend, spline_trend
+    decomposed = deseasonalize(df, column_value, time_column, method, period)
+    chosen = smoother if smoother is not None else PenalizedSpline()
 
-        if trend_method == "spline":
-            trend_result = spline_trend(df, column_value, time_column, **trend_kwargs)
-        elif trend_method == "sgolay":
-            trend_result = sgolay_trend(df, column_value, time_column, **trend_kwargs)
-        elif trend_method == "loess":
-            trend_result = loess_trend(df, column_value, time_column, **trend_kwargs)
-        else:
-            trend_result = estimate_trend(
-                df, column_value, time_column, trend_method, **trend_kwargs
-            )
+    def fit_to(values: npt.NDArray[np.float64]) -> Any:
+        working = df.copy()
+        working[column_value] = values
+        return estimate(chosen, working, column_value, time_column, **fit_kwargs)
 
-        # Add seasonality information
-        trend_result["seasonality_detected"] = seasonality_info["seasonal"]
-        trend_result["seasonality_strength"] = seasonality_info["strength"]
-        return trend_result
+    point = fit_to(decomposed["deseasonalized"].to_numpy())
+    result = point.to_frame(df)
 
-    # Perform seasonal decomposition
-    if decomposition_method == "auto":
-        if HAS_STATSMODELS:
-            decomp_result = stl_decompose(df, column_value, time_column, period)
-        else:
-            decomp_result = simple_deseasonalize(df, column_value, time_column, period)
-    elif decomposition_method == "stl":
-        decomp_result = stl_decompose(df, column_value, time_column, period)
-    elif decomposition_method == "simple":
-        decomp_result = simple_deseasonalize(df, column_value, time_column, period)
-    else:
-        raise ValueError(f"Unknown decomposition method: {decomposition_method}")
-
-    # Estimate trend on deseasonalized data
-    deseasonalized_df = df.copy()
-    deseasonalized_df[column_value] = decomp_result["deseasonalized"]
-
-    from .trend import sgolay_trend, spline_trend
-
-    if trend_method == "spline":
-        trend_result = spline_trend(
-            deseasonalized_df, column_value, time_column, **trend_kwargs
+    if fit_kwargs.get("se"):
+        lower, upper, spread = _bootstrap_pipeline(
+            df,
+            decomposed,
+            column_value,
+            time_column,
+            method,
+            period,
+            chosen,
+            fit_kwargs,
+            n_bootstrap,
+            random_state,
+            float(fit_kwargs.get("confidence_level", 0.95)),
         )
-    elif trend_method == "sgolay":
-        trend_result = sgolay_trend(
-            deseasonalized_df, column_value, time_column, **trend_kwargs
-        )
-    elif trend_method == "loess":
-        try:
-            from .advanced import loess_trend
+        if spread is not None:
+            result["derivative_se"] = spread
+            result["derivative_ci_lower"] = lower
+            result["derivative_ci_upper"] = upper
+            result["se_method"] = "pipeline_bootstrap"
+            # Same rule as TrendEstimate.significant, including the positive-se
+            # requirement. Writing the comparison out again here dropped that
+            # guard, and on a series with no detected cycle -- where the
+            # decomposition residual is identically zero -- every replicate is
+            # the same, the spread is ~1e-17, and 100% of points came back
+            # flagged as trending.
+            usable = (
+                np.isfinite(lower)
+                & np.isfinite(upper)
+                & np.isfinite(spread)
+                & (spread > 0)
+            )
+            result["significant_trend"] = usable & ((lower > 0) | (upper < 0))
 
-            trend_result = loess_trend(
-                deseasonalized_df, column_value, time_column, **trend_kwargs
-            )
-        except ImportError:
-            warnings.warn("LOESS not available, using spline instead", stacklevel=2)
-            trend_result = spline_trend(
-                deseasonalized_df, column_value, time_column, **trend_kwargs
-            )
-    else:
-        try:
-            from .advanced import estimate_trend
+    for column in DECOMPOSITION_COLUMNS:
+        result[column] = decomposed[column].to_numpy()
+    return result
 
-            trend_result = estimate_trend(
-                deseasonalized_df,
-                column_value,
-                time_column,
-                trend_method,
-                **trend_kwargs,
+
+def _bootstrap_pipeline(
+    df: pd.DataFrame,
+    decomposed: pd.DataFrame,
+    column_value: str,
+    time_column: str | None,
+    method: str,
+    period: int | None,
+    smoother: Smoother,
+    fit_kwargs: dict[str, Any],
+    n_bootstrap: int,
+    random_state: int | np.random.Generator | None,
+    confidence_level: float,
+) -> tuple[Any, Any, Any]:
+    """Resample decomposition residuals and redo decomposition plus trend.
+
+    Rebuilding the series from its own fitted components and resampled
+    residuals, then decomposing *again*, is what puts the seasonal fit's
+    uncertainty into the answer. Estimating the trend on a fixed adjusted series
+    cannot: that series is treated as data.
+    """
+    from .api import estimate
+    from .uncertainty import rice_sigma
+
+    rng = np.random.default_rng(random_state)
+    fitted = (
+        decomposed["trend_component"].to_numpy()
+        + decomposed["seasonal_component"].to_numpy()
+    )
+    residuals = decomposed["residual_component"].to_numpy()
+    residuals = residuals[np.isfinite(residuals)]
+    if residuals.size == 0 or float(np.std(residuals)) <= 0.0:
+        # A decomposition that left no residual -- the "no cycle found" route
+        # returns exactly zeros -- cannot be resampled into anything.
+        return None, None, None
+    residuals = residuals - residuals.mean()
+
+    observed = np.asarray(df[column_value], dtype=float)
+    spread = float(residuals.std())
+    if spread > 1e-12:
+        residuals = residuals * (rice_sigma(observed) / spread)
+
+    # The inner fits only contribute a point estimate, so asking each of them
+    # for its own uncertainty nests a bootstrap inside a bootstrap. With the
+    # default PenalizedSpline (lam=None, hence nonlinear) that was 100 outer x
+    # 200 inner spline fits -- about 4.7 minutes for one default call.
+    inner_kwargs = {
+        k: v
+        for k, v in fit_kwargs.items()
+        if k not in {"se", "n_bootstrap", "simultaneous", "random_state"}
+    }
+
+    draws = []
+    for _ in range(n_bootstrap):
+        resampled = fitted + rng.choice(residuals, size=len(fitted), replace=True)
+        replicate = df.copy()
+        replicate[column_value] = resampled
+        try:
+            parts = deseasonalize(replicate, column_value, time_column, method, period)
+            working = df.copy()
+            working[column_value] = parts["deseasonalized"].to_numpy()
+            draws.append(
+                estimate(
+                    smoother, working, column_value, time_column, **inner_kwargs
+                ).derivative
             )
-        except ImportError:
+        except Exception as exc:
             warnings.warn(
-                f"Method {trend_method} not available, using spline instead",
-                stacklevel=2,
+                f"A pipeline bootstrap replicate failed ({exc}); skipping it.",
+                stacklevel=4,
             )
-            trend_result = spline_trend(
-                deseasonalized_df, column_value, time_column, **trend_kwargs
-            )
+            continue
 
-    # Combine decomposition and trend results
-    final_result = decomp_result.copy()
+    if not draws:
+        warnings.warn(
+            "Every pipeline bootstrap replicate failed; keeping the "
+            "decomposition-conditional standard error.",
+            stacklevel=3,
+        )
+        return None, None, None
 
-    # Add trend estimation results
-    for col in [
-        "smoothed_value",
-        "derivative_value",
-        "derivative_method",
-        "function_order",
-        "derivative_order",
-    ]:
-        if col in trend_result.columns:
-            final_result[f"trend_{col}"] = trend_result[col]
-
-    # Copy other trend-specific columns
-    for col in trend_result.columns:
-        if col not in final_result.columns and col != column_value:
-            final_result[col] = trend_result[col]
-
-    final_result["seasonality_detected"] = seasonality_info["seasonal"]
-    final_result["seasonality_strength"] = seasonality_info["strength"]
-
-    return final_result
-
-
-# Convenience function for pipeline integration
-def deseasonalize_pipeline(
-    decomposition_method: str = "auto", period: int | None = None, **decomp_kwargs: Any
-) -> Any:
-    """Create a deseasonalization pipeline for use with pandas pipe.
-
-    Parameters
-    ----------
-    decomposition_method : str
-        Decomposition method to use
-    period : int, optional
-        Seasonal period
-    **decomp_kwargs
-        Additional decomposition arguments
-
-    Returns:
-    -------
-    callable
-        Function that can be used with pandas.DataFrame.pipe()
-
-    Examples:
-    --------
-    >>> result = df.pipe(deseasonalize_pipeline('stl')).pipe(estimate_trend, 'spline')
-    """
-
-    def _deseasonalize(
-        df: pd.DataFrame, column_value: str = "value", time_column: str | None = None
-    ) -> pd.DataFrame:
-        if decomposition_method == "stl":
-            return stl_decompose(df, column_value, time_column, period, **decomp_kwargs)
-        elif decomposition_method == "simple":
-            return simple_deseasonalize(df, column_value, time_column, period)
-        else:
-            # Auto-select
-            seasonality_info = detect_seasonality(df, column_value, time_column)
-            if seasonality_info["seasonal"] and HAS_STATSMODELS:
-                return stl_decompose(
-                    df, column_value, time_column, period, **decomp_kwargs
-                )
-            else:
-                return simple_deseasonalize(df, column_value, time_column, period)
-
-    return _deseasonalize
+    stacked = np.asarray(draws)
+    # The percentiles have to follow the requested level; hard-coding 2.5/97.5
+    # returned a 95% interval whatever the caller asked for, which silently
+    # changed significance decisions.
+    alpha = 1.0 - confidence_level
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        return (
+            np.nanpercentile(stacked, 100 * alpha / 2, axis=0),
+            np.nanpercentile(stacked, 100 * (1 - alpha / 2), axis=0),
+            np.nanstd(stacked, axis=0),
+        )
