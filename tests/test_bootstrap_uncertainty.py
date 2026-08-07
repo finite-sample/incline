@@ -346,8 +346,8 @@ def test_the_l1_filter_undercovers_at_a_slope_change(reps):
             se=True,
             n_bootstrap=N_BOOTSTRAP,
         )
-        covered += float(fitted.ci_lower[kink]) <= target <= float(
-            fitted.ci_upper[kink]
+        covered += (
+            float(fitted.ci_lower[kink]) <= target <= float(fitted.ci_upper[kink])
         )
 
     rate = covered / reps
