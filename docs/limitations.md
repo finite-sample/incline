@@ -62,6 +62,15 @@ around 0.21 when the truth is 0.7.
 Only AR(1) is supported. Long-memory processes, and dependence that changes over
 the series, are not.
 
+Those figures are for a smoother with an exact operator. For a **bootstrapped**
+smoother under dependence the picture is worse and the direction is the other
+way: the block bootstrap is over-dispersed, reporting standard errors about
+1.7x the estimator's true spread even when handed the exact noise level. An
+estimated scalar scale is therefore left to the bootstrap's own
+difference-based estimate rather than replaced by the AR(1) one, which lands it
+near 0.77 instead — under rather than over, and much closer to right. A scale
+you state explicitly is always used as given.
+
 ## Gaussian processes and state-space models are gated differently
 
 Both are shrinkage estimators: biased by construction, because that is what

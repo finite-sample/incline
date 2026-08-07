@@ -364,3 +364,67 @@ def test_only_grid_methods_declare_the_requirement():
     assert NaiveDifference.requires_regular_grid
     assert not LocalPolynomial.requires_regular_grid
     assert not InterpolatingSpline.requires_regular_grid
+
+
+def test_an_estimated_ar1_scale_does_not_inflate_the_bootstrap():
+    """Regression: honoring `noise=` must not mean adopting every estimate.
+
+    Passing estimate_ar1's sigma to the bootstrap looks principled and measures
+    badly. That estimator exists to pair with a full AR(1) covariance in
+    `propagate`; used alone it runs about 1.4x high, and on top of an already
+    over-dispersed block bootstrap it produced standard errors 2.8x the
+    estimator's real spread. An estimated scalar scale is therefore left to the
+    bootstrap's own difference-based estimate, which its rescaling was
+    calibrated against.
+    """
+    from incline.noise import AR1
+    from incline.simulate import NoiseGenerator
+
+    rng = np.random.default_rng(5)
+    truth = 0.7 - 0.4 * AXIS.x
+    smoother = InterpolatingSpline()
+
+    estimates, errors = [], []
+    for _ in range(40):
+        y = truth + NoiseGenerator.ar1(N, 0.7, 0.4, rng)
+        fitted = smoother.fit(
+            AXIS,
+            y,
+            order=1,
+            se=True,
+            noise=AR1(),
+            n_bootstrap=40,
+            random_state=int(rng.integers(1 << 30)),
+        )
+        estimates.append(fitted.derivative[N // 2])
+        errors.append(fitted.se[N // 2])
+
+    ratio = float(np.mean(errors) / np.std(estimates))
+    assert ratio < 1.6, f"the bootstrap reports {ratio:.2f}x the estimator's spread"
+
+
+def test_a_stated_scale_is_still_adopted_by_the_bootstrap():
+    """The review finding stays fixed: an explicit sigma must reach the interval."""
+    from incline.noise import AR1
+
+    y = noisy(31)
+    smoother = InterpolatingSpline()
+    small = smoother.fit(
+        AXIS,
+        y,
+        order=1,
+        se=True,
+        noise=AR1(sigma=0.3, phi=0.5),
+        n_bootstrap=40,
+        random_state=1,
+    )
+    large = smoother.fit(
+        AXIS,
+        y,
+        order=1,
+        se=True,
+        noise=AR1(sigma=3.0, phi=0.5),
+        n_bootstrap=40,
+        random_state=1,
+    )
+    assert np.nanmean(large.se) > 5.0 * np.nanmean(small.se)

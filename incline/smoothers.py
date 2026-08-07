@@ -425,7 +425,7 @@ class Smoother(ABC):
             confidence_level=confidence_level,
             block_size=block,
             random_state=random_state,
-            scale=noise_fit.pointwise_scale(axis.n),
+            scale=noise_fit.bootstrap_scale(axis.n),
         )
         if standard_errors is None:
             return estimate

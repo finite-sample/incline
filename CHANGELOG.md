@@ -140,6 +140,14 @@ documented state — never a missing column. Gone: `edge_region`, `changepoint`,
   interval whatever level was requested, because the pipeline bootstrap
   hard-coded its percentiles.
 
+A scale you state explicitly is always used. A scale the package *estimates* as
+a plain scalar is left to the bootstrap's own difference-based estimate:
+`estimate_ar1`'s sigma exists to pair with a full AR(1) covariance and runs
+about 1.4x high on its own, which on top of an already over-dispersed block
+bootstrap gave standard errors 2.8x the estimator's real spread. The block
+bootstrap over-covers under dependence regardless — about 1.7x even with the
+exact noise level — and that is documented rather than papered over.
+
 ### Verified
 
 Measured over 400 replicates with the truth inside each estimator's

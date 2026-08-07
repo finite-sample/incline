@@ -172,32 +172,43 @@ class NoiseFit:
         phi: AR(1) coefficient. Zero means independent.
         explicit: A caller-supplied covariance matrix, used verbatim when set.
         sigma_vector: Per-point standard deviations, when the scale varies.
+        scale_is_stated: Whether the scale came from the caller or from a
+            plain scalar estimate. Decides whether the bootstrap adopts it.
     """
 
     sigma: float
     phi: float = 0.0
     explicit: npt.NDArray[np.float64] | None = None
     sigma_vector: npt.NDArray[np.float64] | None = None
+    scale_is_stated: bool = False
 
-    def pointwise_scale(self, n: int) -> npt.NDArray[np.float64]:
-        """Per-observation noise standard deviation.
+    def bootstrap_scale(self, n: int) -> npt.NDArray[np.float64] | None:
+        """The scale a residual bootstrap should resample at, if this fixes one.
 
-        The bootstrap needs a scale to rescale residuals to, and that scale has
-        to come from the noise model the caller asked for rather than being
-        recomputed from the data -- otherwise ``noise=`` would have no effect on
-        any smoother that is bootstrapped rather than probed.
+        Returns None when the scale is a plain scalar this module estimated,
+        leaving the bootstrap to use its own difference-based estimate -- which
+        is the one its rescaling was calibrated against.
+
+        The distinction is not fussiness. Feeding :func:`estimate_ar1`'s sigma
+        to the bootstrap looks principled and measures badly: that estimator
+        exists to pair with a full AR(1) covariance in ``propagate``, and used
+        alone it ran about 1.4x high, which on top of an already over-dispersed
+        block bootstrap gave standard errors 2.8x the estimator's real spread.
 
         Args:
             n: Number of observations.
 
         Returns:
-            Standard deviation at each point.
+            Standard deviation at each point, or None to let the bootstrap
+            estimate its own.
         """
         if self.explicit is not None:
             return np.sqrt(np.maximum(np.diag(self.explicit), 0.0))
         if self.sigma_vector is not None:
             return np.asarray(self.sigma_vector, dtype=np.float64)
-        return np.full(n, self.sigma, dtype=np.float64)
+        if self.scale_is_stated:
+            return np.full(n, self.sigma, dtype=np.float64)
+        return None
 
     def covariance(self, n: int) -> npt.NDArray[np.float64]:
         """Materialise the n x n noise covariance.
@@ -282,7 +293,11 @@ class IID(NoiseModel):
     def estimate(self, y: npt.NDArray[np.float64], axis: TimeAxis) -> NoiseFit:
         """Estimate the noise level, or use the supplied one."""
         del axis
-        return NoiseFit(sigma=self.sigma if self.sigma is not None else rice_sigma(y))
+        stated = self.sigma is not None
+        return NoiseFit(
+            sigma=self.sigma if stated else rice_sigma(y),
+            scale_is_stated=stated,
+        )
 
 
 @dataclass(frozen=True)
@@ -304,6 +319,7 @@ class AR1(NoiseModel):
         return NoiseFit(
             sigma=self.sigma if self.sigma is not None else sigma_hat,
             phi=self.phi if self.phi is not None else phi_hat,
+            scale_is_stated=self.sigma is not None,
         )
 
 
@@ -339,7 +355,9 @@ class Heteroskedastic(NoiseModel):
                 )
         else:
             scale = local_sigma(y, self.window)
-        return NoiseFit(sigma=float(np.mean(scale)), sigma_vector=scale)
+        return NoiseFit(
+            sigma=float(np.mean(scale)), sigma_vector=scale, scale_is_stated=True
+        )
 
 
 @dataclass(frozen=True)
