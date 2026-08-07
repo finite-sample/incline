@@ -140,6 +140,40 @@ documented state — never a missing column. Gone: `edge_region`, `changepoint`,
   interval whatever level was requested, because the pipeline bootstrap
   hard-coded its percentiles.
 
+- The deseasonalizing pipeline reported every point of a pure-noise series as
+  significantly trending. When the decomposition left residuals with no spread
+  each resample reproduced the same curve, so the standard error came out at
+  7e-18 and the significance flag was a comparison against zero.
+- `AR1(phi=...)` ignored the stated autocorrelation when scaling the noise
+  level, returning sigma 1.417 for phi of 0.0 and of 0.9 alike. Sigma is
+  recovered by dividing the second difference's observed variance by its
+  theoretical value at a given phi, and that divisor falls from 6 to 0.9 across
+  the grid, so one sigma cannot describe the process at another phi.
+- `generate_time_series` carried a daily `DatetimeIndex` whatever `x_range`
+  said, so an estimator read a spacing of one day while the returned true
+  derivative was per unit of x. Over (0, 10) with 100 points those differ by a
+  factor of ten, which silently rescaled anything measured against it.
+- A single series whose smoother returned nothing usable turned *every* rank
+  into NaN, because `rankdata` propagates it. Unusable series now sort last.
+- Savitzky-Golay raised from inside scipy on a series shorter than its window,
+  reporting "polyorder must be less than window_length" and naming neither the
+  length nor the remedy. The window is clamped where one exists and the error
+  says so where none does.
+- `estimate_trend` routed keyword arguments through `__dataclass_fields__`,
+  which includes `ClassVar` pseudo-fields, so `linear=False` was passed to the
+  constructor and raised from inside `dataclasses` rather than being reported
+  as an unknown option.
+- The Gaussian process and state-space models accepted `noise=` and
+  `simultaneous=` and silently ignored both — neither exposes a linear operator,
+  so the interval comes from its own posterior. They now say so.
+- SiZer checked that enough observations were finite and then swept the raw
+  series anyway, so a single missing value produced an entirely blank map, which
+  reads as "nothing is trending" rather than "nothing could be computed".
+- The operator cache was bounded at 64 entries, each holding two n-by-n
+  matrices. At n=2000 that is 64 MB apiece, so a multi-scale sweep on a long
+  series could reach roughly 4 GB before evicting anything. The bound is now in
+  bytes.
+
 - A `PeriodIndex` was rejected, though monthly and quarterly series are
   ordinarily indexed that way. It is now read as a time axis.
 - An index carrying no time information — strings, categories — surfaced a raw

@@ -518,7 +518,19 @@ def trend_with_deseasonalization(
             result["derivative_ci_lower"] = lower
             result["derivative_ci_upper"] = upper
             result["se_method"] = "pipeline_bootstrap"
-            result["significant_trend"] = (lower > 0) | (upper < 0)
+            # Same rule as TrendEstimate.significant, including the positive-se
+            # requirement. Writing the comparison out again here dropped that
+            # guard, and on a series with no detected cycle -- where the
+            # decomposition residual is identically zero -- every replicate is
+            # the same, the spread is ~1e-17, and 100% of points came back
+            # flagged as trending.
+            usable = (
+                np.isfinite(lower)
+                & np.isfinite(upper)
+                & np.isfinite(spread)
+                & (spread > 0)
+            )
+            result["significant_trend"] = usable & ((lower > 0) | (upper < 0))
 
     for column in DECOMPOSITION_COLUMNS:
         result[column] = decomposed[column].to_numpy()
@@ -555,7 +567,9 @@ def _bootstrap_pipeline(
     )
     residuals = decomposed["residual_component"].to_numpy()
     residuals = residuals[np.isfinite(residuals)]
-    if residuals.size == 0:
+    if residuals.size == 0 or float(np.std(residuals)) <= 0.0:
+        # A decomposition that left no residual -- the "no cycle found" route
+        # returns exactly zeros -- cannot be resampled into anything.
         return None, None, None
     residuals = residuals - residuals.mean()
 
@@ -563,6 +577,16 @@ def _bootstrap_pipeline(
     spread = float(residuals.std())
     if spread > 1e-12:
         residuals = residuals * (rice_sigma(observed) / spread)
+
+    # The inner fits only contribute a point estimate, so asking each of them
+    # for its own uncertainty nests a bootstrap inside a bootstrap. With the
+    # default PenalizedSpline (lam=None, hence nonlinear) that was 100 outer x
+    # 200 inner spline fits -- about 4.7 minutes for one default call.
+    inner_kwargs = {
+        k: v
+        for k, v in fit_kwargs.items()
+        if k not in {"se", "n_bootstrap", "simultaneous", "random_state"}
+    }
 
     draws = []
     for _ in range(n_bootstrap):
@@ -575,7 +599,7 @@ def _bootstrap_pipeline(
             working[column_value] = parts["deseasonalized"].to_numpy()
             draws.append(
                 estimate(
-                    smoother, working, column_value, time_column, **fit_kwargs
+                    smoother, working, column_value, time_column, **inner_kwargs
                 ).derivative
             )
         except Exception as exc:

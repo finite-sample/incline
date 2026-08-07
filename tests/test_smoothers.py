@@ -6,6 +6,7 @@ the whole registry: whatever gets added later has to satisfy them too.
 
 from __future__ import annotations
 
+import math
 import warnings
 
 import numpy as np
@@ -167,48 +168,44 @@ def test_correlated_noise_narrows_a_differencing_interval():
     independent one -- the reverse of every smoothing method here. Pinning it
     guards against someone "fixing" the sign by assuming dependence always
     widens.
+
+    Sigma is stated rather than estimated on both sides. Estimating it under
+    each model separately compares two different processes: imposing phi=0.7 on
+    genuinely independent data implies a marginal variance about four times
+    larger, which is a fact about noise estimation and not about differencing.
     """
     y = noisy(5)
     naive = NaiveDifference()
-    independent = naive.fit(AXIS, y, order=1, se=True, noise=IID())
-    correlated = naive.fit(AXIS, y, order=1, se=True, noise=AR1(phi=0.7))
-    assert np.nanmean(correlated.se) < np.nanmean(independent.se)
-
-
-@pytest.mark.parametrize("smoother", LINEAR)
-def test_whole_curve_band_is_wider_than_pointwise(smoother):
-    """Correcting for testing every point can only widen the band."""
-    y = noisy(7)
-    pointwise = smoother.fit(AXIS, y, order=1, se=True)
-    whole = smoother.fit(AXIS, y, order=1, se=True, simultaneous=True, random_state=0)
-    width_point = np.nanmean(pointwise.ci_upper - pointwise.ci_lower)
-    width_whole = np.nanmean(whole.ci_upper - whole.ci_lower)
-    assert width_whole > width_point
-    assert whole.provenance.simultaneous
-
-
-@pytest.mark.parametrize("name", ALL_NAMES)
-def test_wider_confidence_gives_a_wider_interval(name):
-    """confidence_level must reach the interval, not get defaulted away."""
-    y = noisy(9)
-    narrow = build(name).fit(
-        AXIS, y, order=1, se=True, confidence_level=0.5, n_bootstrap=40, random_state=1
-    )
-    wide = build(name).fit(
-        AXIS, y, order=1, se=True, confidence_level=0.99, n_bootstrap=40, random_state=1
-    )
-    assert np.nanmean(wide.ci_upper - wide.ci_lower) > np.nanmean(
-        narrow.ci_upper - narrow.ci_lower
+    phi = 0.7
+    independent = naive.fit(AXIS, y, order=1, se=True, noise=IID(sigma=0.25))
+    correlated = naive.fit(AXIS, y, order=1, se=True, noise=AR1(phi=phi, sigma=0.25))
+    ratio = float(np.nanmean(correlated.se) / np.nanmean(independent.se))
+    assert ratio == pytest.approx(math.sqrt(1 - phi**2), rel=0.02), (
+        f"AR(1)/iid width ratio {ratio:.3f}, expected {math.sqrt(1 - phi**2):.3f}"
     )
 
 
-@pytest.mark.parametrize("name", ALL_NAMES)
-def test_unsupported_derivative_order_is_refused(name):
-    """Asking for a derivative a method cannot give must raise, not guess."""
-    smoother = build(name)
-    unsupported = max(smoother.supported_orders) + 1
-    with pytest.raises(ValueError, match=r"order|derivative"):
-        smoother.fit(AXIS, noisy(), order=unsupported)
+@pytest.mark.parametrize("phi", [0.0, 0.5, 0.9])
+def test_a_stated_autocorrelation_rescales_the_noise_level(phi):
+    """Regression: sigma was left at a value calibrated for a different phi.
+
+    Sigma is recovered by dividing the second difference's observed variance by
+    its theoretical value at a given phi, and that divisor falls from 6 to 0.9
+    across the grid. Reusing one sigma across phi therefore misstates the noise
+    level by up to an order of magnitude -- and ``AR1(phi=0.9)`` returned the
+    same 1.417 as ``AR1(phi=0.0)``.
+    """
+    from incline.noise import estimate_ar1
+
+    y = noisy(5)
+    fitted_phi, sigma = estimate_ar1(y, phi)
+    assert fitted_phi == phi
+    # A more strongly correlated process has to have a larger marginal spread
+    # to leave the same second-difference variance behind.
+    _, baseline = estimate_ar1(y, 0.0)
+    assert sigma >= baseline
+    if phi > 0:
+        assert sigma > baseline * 1.2
 
 
 def test_second_derivative_finds_curvature():
@@ -428,3 +425,111 @@ def test_a_stated_scale_is_still_adopted_by_the_bootstrap():
         random_state=1,
     )
     assert np.nanmean(large.se) > 5.0 * np.nanmean(small.se)
+
+
+def test_a_series_shorter_than_the_window_says_so():
+    """Regression: Savitzky-Golay raised from deep inside scipy on short input.
+
+    ``savgol_filter`` reported "polyorder must be less than window_length",
+    naming neither the series length nor the remedy. Below the polynomial order
+    there is no window that could work, so the estimator has to say that.
+    """
+    short = TimeAxis.positional(4)
+    with pytest.raises(ValueError, match="at least"):
+        SavitzkyGolay(window_length=21).fit(short, np.arange(4.0), order=2)
+
+
+def test_a_short_series_still_fits_when_a_window_exists():
+    """The clamp still applies wherever the polynomial order allows one."""
+    axis = TimeAxis.positional(9)
+    estimate = SavitzkyGolay(window_length=41).fit(axis, np.arange(9.0), order=1)
+    assert np.all(np.isfinite(estimate.derivative))
+
+
+@pytest.mark.parametrize("name", ["gp", "kalman"])
+def test_a_native_posterior_says_when_an_argument_does_not_apply(name):
+    """Regression: noise= and simultaneous= were accepted and then ignored.
+
+    Neither smoother exposes a linear operator, so its interval comes from its
+    own posterior. Silently discarding the caller's noise model let a series be
+    reported under assumptions nobody chose.
+    """
+    smoother = build(name)
+    with pytest.warns(UserWarning, match="posterior"):
+        result = smoother.fit(AXIS, noisy(), order=1, se=True, noise=AR1())
+    assert result.provenance.noise is None
+
+    with pytest.warns(UserWarning, match="whole-curve"):
+        pointwise = smoother.fit(AXIS, noisy(), order=1, se=True, simultaneous=True)
+    assert not pointwise.provenance.simultaneous
+
+
+def test_a_noise_model_that_does_apply_passes_without_a_warning():
+    """The warning has to be about applicability, not about the argument."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        SavitzkyGolay(window_length=15).fit(
+            AXIS, noisy(), order=1, se=True, noise=AR1()
+        )
+
+
+def test_the_operator_cache_is_bounded_by_memory_not_by_entries():
+    """Regression: the bound counted entries, each holding two n-by-n matrices.
+
+    At n = 2000 an entry is 64 MB, so an allowance of 64 entries reached roughly
+    4 GB before evicting anything -- a multi-scale sweep on a long series was
+    enough to exhaust memory.
+    """
+    from incline.smoothers import _OPERATOR_CACHE, OPERATOR_CACHE_BYTES, _cache_bytes
+
+    _OPERATOR_CACHE.clear()
+    try:
+        axis = TimeAxis.positional(400)
+        for window in range(5, 200, 2):
+            SavitzkyGolay(window_length=window).operators(axis, 1)
+        assert _cache_bytes() <= OPERATOR_CACHE_BYTES
+
+        wanted = SavitzkyGolay(window_length=11).operators(axis, 1)[1].copy()
+        for window in range(5, 200, 2):
+            SavitzkyGolay(window_length=window).operators(axis, 1)
+        np.testing.assert_allclose(
+            wanted, SavitzkyGolay(window_length=11).operators(axis, 1)[1]
+        )
+    finally:
+        _OPERATOR_CACHE.clear()
+
+
+@pytest.mark.parametrize("smoother", LINEAR)
+def test_whole_curve_band_is_wider_than_pointwise(smoother):
+    """Correcting for testing every point can only widen the band."""
+    y = noisy(7)
+    pointwise = smoother.fit(AXIS, y, order=1, se=True)
+    whole = smoother.fit(AXIS, y, order=1, se=True, simultaneous=True, random_state=0)
+    width_point = np.nanmean(pointwise.ci_upper - pointwise.ci_lower)
+    width_whole = np.nanmean(whole.ci_upper - whole.ci_lower)
+    assert width_whole > width_point
+    assert whole.provenance.simultaneous
+
+
+@pytest.mark.parametrize("name", ALL_NAMES)
+def test_wider_confidence_gives_a_wider_interval(name):
+    """confidence_level must reach the interval, not get defaulted away."""
+    y = noisy(9)
+    narrow = build(name).fit(
+        AXIS, y, order=1, se=True, confidence_level=0.5, n_bootstrap=40, random_state=1
+    )
+    wide = build(name).fit(
+        AXIS, y, order=1, se=True, confidence_level=0.99, n_bootstrap=40, random_state=1
+    )
+    assert np.nanmean(wide.ci_upper - wide.ci_lower) > np.nanmean(
+        narrow.ci_upper - narrow.ci_lower
+    )
+
+
+@pytest.mark.parametrize("name", ALL_NAMES)
+def test_unsupported_derivative_order_is_refused(name):
+    """Asking for a derivative a method cannot give must raise, not guess."""
+    smoother = build(name)
+    unsupported = max(smoother.supported_orders) + 1
+    with pytest.raises(ValueError, match=r"order|derivative"):
+        smoother.fit(AXIS, noisy(), order=unsupported)

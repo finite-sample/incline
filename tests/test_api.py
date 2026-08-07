@@ -236,3 +236,25 @@ def test_second_derivative_is_available_where_supported():
     interior = result["derivative_value"].to_numpy()[15:-15]
     assert np.allclose(interior, 1.0, atol=0.05)
     assert result["derivative_order"].iloc[0] == 2
+
+
+def test_a_class_attribute_is_not_a_constructor_argument():
+    """Regression: routing read ``__dataclass_fields__``, which holds ClassVars.
+
+    ``linear``, ``name`` and ``supported_orders`` describe the class rather than
+    configure an instance, so ``estimate_trend(df, method="sgolay", linear=False)``
+    was routed to the constructor and raised from inside dataclasses instead of
+    being reported as an unknown option.
+    """
+    frame = pd.DataFrame({"value": np.arange(40.0)})
+    for attribute in ("linear", "name", "supported_orders"):
+        with pytest.raises(TypeError, match="does not accept"):
+            api.estimate_trend(frame, method="sgolay", **{attribute: False})
+
+
+def test_uncertainty_options_reach_the_fit_and_settings_reach_the_constructor():
+    """The two destinations stay distinguishable after the allowlist."""
+    frame = pd.DataFrame({"value": np.arange(60.0) * 0.1})
+    result = api.estimate_trend(frame, method="sgolay", window_length=21, se=True)
+    assert result["window_length"].iloc[0] == 21
+    assert result["derivative_se"].notna().all()

@@ -10,6 +10,7 @@ question of uncertainty.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -453,7 +454,27 @@ def estimate_trend(
     if smoother_class is None:
         raise ValueError(f"Unknown method {method!r}; available: {sorted(SMOOTHERS)}")
 
-    constructor_fields = set(smoother_class.__dataclass_fields__)  # type: ignore[attr-defined]
+    # dataclasses.fields() excludes ClassVar pseudo-fields. __dataclass_fields__
+    # includes them, so `name`, `linear`, `supported_orders` and
+    # `requires_regular_grid` were being routed into the constructor.
+    constructor_fields = {f.name for f in dataclasses.fields(smoother_class)}
+    fit_options = {
+        "derivative_order",
+        "se",
+        "noise",
+        "bias_correct",
+        "simultaneous",
+        "confidence_level",
+        "n_bootstrap",
+        "random_state",
+    }
+    unknown = set(kwargs) - constructor_fields - fit_options
+    if unknown:
+        raise TypeError(
+            f"{method} does not accept {sorted(unknown)}. Smoother settings: "
+            f"{sorted(constructor_fields)}. Uncertainty options: "
+            f"{sorted(fit_options)}."
+        )
     construction = {k: v for k, v in kwargs.items() if k in constructor_fields}
     fitting = {k: v for k, v in kwargs.items() if k not in constructor_fields}
 

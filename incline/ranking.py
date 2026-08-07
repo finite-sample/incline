@@ -203,5 +203,10 @@ def trending(
         )
 
     frame = pd.DataFrame(rows)
-    frame["rank"] = rankdata(-frame["trend"], method="ordinal")
+    # rankdata propagates NaN by default, so a single series whose window is
+    # entirely non-finite -- easy with local-polynomial edge NaNs -- returned
+    # NaN for *every* rank and left the sort in arbitrary order. Unrankable
+    # series go last instead.
+    order = np.nan_to_num(-frame["trend"].to_numpy(dtype=float), nan=np.inf)
+    frame["rank"] = rankdata(order, method="ordinal")
     return frame.sort_values("rank").reset_index(drop=True)[columns]

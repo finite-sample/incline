@@ -24,6 +24,7 @@ selection, and the documentation's slider.
 from __future__ import annotations
 
 import math
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -52,10 +53,19 @@ if TYPE_CHECKING:
 
 # Operators depend only on (smoother, axis, order), so they survive across
 # fits. A handful of entries covers a multi-scale sweep or a simulation study.
-OPERATOR_CACHE_LIMIT = 64
+#
+# The bound is in bytes rather than entries because each entry holds two n x n
+# float64 matrices: at n = 2000 that is 64 MB apiece, so a 64-entry allowance
+# would have reached about 4 GB before evicting anything.
+OPERATOR_CACHE_BYTES = 512 * 1024 * 1024
 _OPERATOR_CACHE: dict[Any, tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]] = {}
 
 SMOOTHERS: dict[str, type[Smoother]] = {}
+
+
+def _cache_bytes() -> int:
+    """Total memory held by the operator cache."""
+    return sum(a.nbytes + b.nbytes for a, b in _OPERATOR_CACHE.values())
 
 
 def register(cls: type[Smoother]) -> type[Smoother]:
@@ -200,9 +210,11 @@ class Smoother(ABC):
         else:
             smoothing, derivative = self._probe_operators(axis, order)
 
-        if len(_OPERATOR_CACHE) >= OPERATOR_CACHE_LIMIT:
-            _OPERATOR_CACHE.clear()
-        _OPERATOR_CACHE[cache_key] = (smoothing, derivative)
+        size = smoothing.nbytes + derivative.nbytes
+        if size <= OPERATOR_CACHE_BYTES:
+            while _OPERATOR_CACHE and _cache_bytes() + size > OPERATOR_CACHE_BYTES:
+                _OPERATOR_CACHE.pop(next(iter(_OPERATOR_CACHE)))
+            _OPERATOR_CACHE[cache_key] = (smoothing, derivative)
         return smoothing, derivative
 
     def _probe_operators(
@@ -378,6 +390,22 @@ class Smoother(ABC):
 
         native = self.native_posterior(axis, y, order, confidence_level)
         if native is not None:
+            # This smoother's posterior is its own, so an external noise model
+            # and a whole-curve band do not enter it. Both were being accepted
+            # and dropped, and the noise label was recorded anyway -- naming a
+            # model that had no effect on the interval.
+            if noise is not None:
+                warnings.warn(
+                    f"{self.name} carries its own posterior, so noise= does "
+                    f"not affect its uncertainty.",
+                    stacklevel=3,
+                )
+            if simultaneous:
+                warnings.warn(
+                    f"{self.name} has no linear operator, so a whole-curve "
+                    f"band is unavailable; the interval is pointwise.",
+                    stacklevel=3,
+                )
             standard_errors, lower, upper = native
             return estimate.with_uncertainty(
                 se=standard_errors,
@@ -385,7 +413,6 @@ class Smoother(ABC):
                 ci_lower=lower,
                 ci_upper=upper,
                 confidence_level=confidence_level,
-                noise=noise_label,
             )
 
         if self.is_linear:
@@ -584,8 +611,7 @@ class SavitzkyGolay(Smoother):
         self, axis: TimeAxis, y: npt.NDArray[np.float64], order: int
     ) -> Evaluation:
         """Filter the series and differentiate."""
-        window = _odd(self.window_length, self.polyorder + 2)
-        window = min(window, _odd(axis.n, 3) if axis.n % 2 else axis.n - 1)
+        window = self._window_for(axis.n)
         return Evaluation(
             values=savgol_filter(
                 y,
@@ -602,6 +628,30 @@ class SavitzkyGolay(Smoother):
             ),
         )
 
+    def _window_for(self, n: int) -> int:
+        """The filter width to use on a series of ``n`` points.
+
+        Args:
+            n: Number of observations.
+
+        Returns:
+            An odd window that fits the series and exceeds the polynomial order.
+
+        Raises:
+            ValueError: If the series is too short to support the filter.
+        """
+        floor = self.polyorder + 2
+        if n < floor:
+            raise ValueError(
+                f"Savitzky-Golay with polyorder={self.polyorder} needs at "
+                f"least {floor} observations, got {n}. Lower polyorder, or "
+                f"use a method that does not need a fixed window."
+            )
+        widest = n if n % 2 else n - 1
+        # Clamping to the series length must not drop below the order floor,
+        # or scipy raises "polyorder must be less than window_length".
+        return max(min(_odd(self.window_length, floor), widest), floor)
+
     def closed_form_se(
         self, axis: TimeAxis, order: int, sigma: float
     ) -> npt.NDArray[np.float64]:
@@ -615,9 +665,8 @@ class SavitzkyGolay(Smoother):
         Returns:
             The constant interior standard error, broadcast over the series.
         """
-        window = _odd(self.window_length, self.polyorder + 2)
         coefficients = savgol_coeffs(
-            window, self.polyorder, deriv=order, delta=axis.delta
+            self._window_for(axis.n), self.polyorder, deriv=order, delta=axis.delta
         )
         return np.full(axis.n, sigma * float(np.linalg.norm(coefficients)))
 

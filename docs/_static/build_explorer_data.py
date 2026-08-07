@@ -100,24 +100,34 @@ def build_series() -> dict[str, dict]:
     return series
 
 
+def _rounded(values, n):
+    """Round for the payload, tolerating a bootstrap that returned nothing."""
+    if values is None:
+        return [None] * n
+    return np.round(values, 6).tolist()
+
+
 def panel(smoother, axis, y, supports_bias):
     """Fit one configuration under both noise models."""
     out: dict[str, object] = {}
     base = smoother.fit(axis, y, order=1, se=True, noise=IID(), n_bootstrap=60)
-    out["smoothed"] = np.round(base.values, 6).tolist()
-    out["derivative"] = np.round(base.derivative, 6).tolist()
-    out["se_iid"] = np.round(base.se, 6).tolist()
+    out["smoothed"] = _rounded(base.values, axis.n)
+    out["derivative"] = _rounded(base.derivative, axis.n)
+    out["se_iid"] = _rounded(base.se, axis.n)
     out["se_method"] = base.provenance.se_method
 
-    correlated = smoother.fit(
-        axis, y, order=1, se=True, noise=AR1(), n_bootstrap=60
-    )
-    out["se_ar1"] = np.round(correlated.se, 6).tolist()
+    correlated = smoother.fit(axis, y, order=1, se=True, noise=AR1(), n_bootstrap=60)
+    out["se_ar1"] = _rounded(correlated.se, axis.n)
 
     if smoother.is_linear:
         simultaneous = smoother.fit(
-            axis, y, order=1, se=True, noise=IID(),
-            simultaneous=True, random_state=0,
+            axis,
+            y,
+            order=1,
+            se=True,
+            noise=IID(),
+            simultaneous=True,
+            random_state=0,
         )
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio = (simultaneous.ci_upper - simultaneous.derivative) / np.where(
@@ -131,8 +141,8 @@ def panel(smoother, axis, y, supports_bias):
         corrected = smoother.fit(
             axis, y, order=1, se=True, noise=IID(), bias_correct=True
         )
-        out["bc_derivative"] = np.round(corrected.derivative, 6).tolist()
-        out["bc_se"] = np.round(corrected.se, 6).tolist()
+        out["bc_derivative"] = _rounded(corrected.derivative, axis.n)
+        out["bc_se"] = _rounded(corrected.se, axis.n)
     else:
         out["bc_derivative"] = None
         out["bc_se"] = None

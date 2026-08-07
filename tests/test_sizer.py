@@ -168,3 +168,19 @@ def test_plot_returns_a_figure():
     figure = sizer_analysis(series(), n_scales=4).plot()
     assert figure is not None
     plt.close(figure)
+
+
+def test_missing_values_are_refused_rather_than_silently_swept():
+    """Regression: the finite count was checked and then the raw series used.
+
+    A NaN propagated through every smoother at every scale, so the map came back
+    entirely blank -- which reads as "nothing is trending here" rather than
+    "nothing could be computed".
+    """
+    values = series()["value"].to_numpy()
+    values[17] = np.nan
+    frame = pd.DataFrame(
+        {"value": values}, index=pd.date_range("2020-01-01", periods=N)
+    )
+    with pytest.raises(ValueError, match="missing values"):
+        sizer_analysis(frame)

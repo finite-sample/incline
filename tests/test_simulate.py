@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from incline.axis import TimeAxis
 from incline.simulate import (
     ExponentialTrend,
     NoiseGenerator,
@@ -22,6 +23,7 @@ from incline.simulate import (
     generate_time_series,
     standard_test_functions,
 )
+from incline.smoothers import SavitzkyGolay
 
 
 SMOOTH_TRENDS = [
@@ -187,3 +189,37 @@ def test_standard_functions_expose_names_and_derivatives():
         assert function.name
         assert function(x).shape == x.shape
         assert function.derivative(x, 1).shape == x.shape
+
+
+def test_the_datetime_index_matches_the_x_the_derivative_is_stated_on():
+    """Regression: the index stepped by days while x stepped by x_range/n.
+
+    The frame carried a daily DatetimeIndex regardless of ``x_range``, so an
+    estimator read a spacing of one day while the returned true derivative was
+    per unit of x. Over (0, 10) with 100 points those differ by a factor of ten,
+    which silently rescaled every calibration measurement taken against it.
+    """
+    trend = PolynomialTrend([0.0, 2.0])
+    frame, truth = generate_time_series(
+        trend, n_points=100, x_range=(0.0, 10.0), noise_std=0.0, random_state=0
+    )
+    axis = TimeAxis.from_index(frame.index)
+    np.testing.assert_allclose(axis.x, np.linspace(0.0, 10.0, 100), atol=1e-9)
+    np.testing.assert_allclose(
+        np.gradient(frame["value"].to_numpy(), axis.x), truth, rtol=1e-6
+    )
+
+
+def test_the_stated_derivative_is_recovered_per_unit_of_the_index():
+    """An estimator fed the frame must land on the stated derivative."""
+    frame, _ = generate_time_series(
+        PolynomialTrend([0.0, 2.0]),
+        n_points=80,
+        x_range=(0.0, 8.0),
+        noise_std=0.0,
+        random_state=0,
+    )
+    estimate = SavitzkyGolay(window_length=11).fit(
+        TimeAxis.from_index(frame.index), frame["value"].to_numpy(), order=1
+    )
+    assert float(np.median(estimate.derivative)) == pytest.approx(2.0, rel=1e-6)

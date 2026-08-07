@@ -275,3 +275,36 @@ def test_pipeline_bootstrap_honors_confidence_level():
     assert wide_width > 2.0 * narrow_width, (
         f"50% width {narrow_width:.5f} vs 99% width {wide_width:.5f}"
     )
+
+
+def test_pure_noise_is_not_uniformly_significant():
+    """Regression: a degenerate bootstrap made every point significant.
+
+    When the decomposition leaves residuals with no spread -- which happens on a
+    short or nearly deterministic series -- every resample reproduced the same
+    curve, the standard error came out at 1e-18, and the pipeline reported 100%
+    of points as significantly trending on pure noise.
+    """
+    rng = np.random.default_rng(3)
+    frame = pd.DataFrame(
+        {"value": rng.normal(0, 1.0, 96)},
+        index=pd.date_range("2020-01-01", periods=96, freq="ME"),
+    )
+    result = trend_with_deseasonalization(
+        frame, smoother=PenalizedSpline(), se=True, n_bootstrap=40, random_state=0
+    )
+    rate = float(result["significant_trend"].mean())
+    assert rate < 0.5, f"{rate:.0%} of a pure-noise series flagged as trending"
+    assert float(result["derivative_se"].median()) > 1e-6
+
+
+def test_a_constant_series_reports_no_trend():
+    """The degenerate case itself: zero residual spread must not mean certainty."""
+    frame = pd.DataFrame(
+        {"value": np.full(60, 4.0)},
+        index=pd.date_range("2020-01-01", periods=60, freq="ME"),
+    )
+    result = trend_with_deseasonalization(
+        frame, smoother=PenalizedSpline(), se=True, n_bootstrap=20, random_state=0
+    )
+    assert not result["significant_trend"].any()

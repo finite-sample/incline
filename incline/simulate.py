@@ -392,9 +392,17 @@ def generate_time_series(
             }
         )
     else:
+        # One day per unit of x, not one day per observation. A fixed daily
+        # index silently rescaled the axis by span/(n-1): with the defaults an
+        # estimator run on this frame returned 0.101 where true_derivative said
+        # 1.0, so anyone measuring bias or coverage against it was off by that
+        # factor -- in the one function whose entire job is ground truth.
+        step = float(x[1] - x[0]) if n_points > 1 else 1.0
         frame = pd.DataFrame(
             {"value": observed, "true_value": true_values, "noise": noise},
-            index=pd.date_range("2020-01-01", periods=n_points, freq="D"),
+            index=pd.date_range(
+                "2020-01-01", periods=n_points, freq=pd.Timedelta(days=step)
+            ),
         )
 
     if missing_data_prob > 0:

@@ -86,7 +86,9 @@ def rice_sigma(y: npt.NDArray[np.float64]) -> float:
     return float(np.sqrt(np.mean(_second_difference(y) ** 2) / 6.0))
 
 
-def estimate_ar1(y: npt.NDArray[np.float64]) -> tuple[float, float]:
+def estimate_ar1(
+    y: npt.NDArray[np.float64], phi: float | None = None
+) -> tuple[float, float]:
     """Estimate AR(1) noise parameters without reference to any smoother.
 
     Matches the sample autocovariance of the series' second difference against
@@ -99,6 +101,12 @@ def estimate_ar1(y: npt.NDArray[np.float64]) -> tuple[float, float]:
 
     Args:
         y: Observed values.
+        phi: Use this autocorrelation instead of identifying one, and scale
+            sigma to match it. Sigma is derived by dividing the observed
+            autocovariance by its theoretical value *at a particular phi*, so a
+            sigma computed for one phi does not describe the process at
+            another: over the grid that divisor ranges from 6 down to 0.9, an
+            order of magnitude.
 
     Returns:
         Tuple of (phi, sigma), where sigma is the marginal standard deviation
@@ -107,20 +115,23 @@ def estimate_ar1(y: npt.NDArray[np.float64]) -> tuple[float, float]:
     y = np.asarray(y, dtype=float)
     y = y[np.isfinite(y)]
     if len(y) < _MATCH_LAGS + 3:
-        return 0.0, rice_sigma(y)
+        return (phi or 0.0), rice_sigma(y)
 
     d = _second_difference(y)
     empirical = _empirical_acov(d, _MATCH_LAGS)
     if empirical[0] <= 0:
-        return 0.0, 0.0
+        return (phi or 0.0), 0.0
 
-    theoretical = np.array(
-        [[_theoretical_acov(p, k) for k in range(_MATCH_LAGS)] for p in _PHI_GRID]
-    )
-    # Match the *shape* of the autocovariance; the level fixes sigma afterwards.
-    normalized = theoretical / theoretical[:, [0]]
-    target = empirical / empirical[0]
-    phi = float(_PHI_GRID[np.argmin(((normalized[:, 1:] - target[1:]) ** 2).sum(1))])
+    if phi is None:
+        theoretical = np.array(
+            [[_theoretical_acov(p, k) for k in range(_MATCH_LAGS)] for p in _PHI_GRID]
+        )
+        # Match the *shape* of the autocovariance; the level fixes sigma below.
+        normalized = theoretical / theoretical[:, [0]]
+        target = empirical / empirical[0]
+        phi = float(
+            _PHI_GRID[np.argmin(((normalized[:, 1:] - target[1:]) ** 2).sum(1))]
+        )
 
     variance = empirical[0] / _theoretical_acov(phi, 0)
     return phi, float(np.sqrt(max(variance, 0.0)))
@@ -315,10 +326,12 @@ class AR1(NoiseModel):
     def estimate(self, y: npt.NDArray[np.float64], axis: TimeAxis) -> NoiseFit:
         """Estimate phi and sigma, or use the supplied values."""
         del axis
-        phi_hat, sigma_hat = estimate_ar1(y)
+        # Pass the caller's phi in, so sigma is rescaled to match it rather
+        # than left at a value calibrated for a different autocorrelation.
+        phi_hat, sigma_hat = estimate_ar1(y, self.phi)
         return NoiseFit(
             sigma=self.sigma if self.sigma is not None else sigma_hat,
-            phi=self.phi if self.phi is not None else phi_hat,
+            phi=phi_hat,
             scale_is_stated=self.sigma is not None,
         )
 

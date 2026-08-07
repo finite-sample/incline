@@ -285,6 +285,14 @@ class SiZer:
             raise ValueError(
                 f"SiZer needs at least 5 finite observations, got {int(np.sum(usable))}"
             )
+        if not usable.all():
+            # The count was checked and then the raw series handed on anyway,
+            # so a few NaNs produced an all-NaN map that reads as "nothing is
+            # trending" rather than "nothing could be computed".
+            raise ValueError(
+                f"SiZer cannot sweep a series with {int((~usable).sum())} "
+                f"missing values; interpolate or drop them first."
+            )
 
         scales = self._scale_grid(axis.n)
         derivative = np.full((len(scales), axis.n), np.nan)

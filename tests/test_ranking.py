@@ -8,6 +8,8 @@ smoothed curve. Most of what follows pins the replacement.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -196,3 +198,20 @@ def test_result_is_a_frame_sorted_by_rank():
     assert isinstance(result, pd.DataFrame)
     assert list(result["rank"]) == sorted(result["rank"])
     assert result["trend"].is_monotonic_decreasing
+
+
+def test_a_series_with_no_usable_derivative_ranks_last():
+    """Regression: one NaN trend turned every rank into NaN.
+
+    ``rankdata`` propagates NaN, so a single series whose smoother returned
+    nothing usable erased the ranking for all of them -- the failure showed up
+    as an unusable result rather than as one bad row.
+    """
+    good = {f"s{i}": estimate_for(0.05 * (i + 1), seed=i) for i in range(3)}
+    broken = estimate_for(0.05, seed=9)
+    broken = dataclasses.replace(broken, derivative=np.full(N, np.nan))
+    result = trending({**good, "broken": broken})
+
+    assert result["rank"].notna().all(), "a single NaN trend erased every rank"
+    assert list(result["rank"]) == [1, 2, 3, 4]
+    assert result["id"].iloc[-1] == "broken"
