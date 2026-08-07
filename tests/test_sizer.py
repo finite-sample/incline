@@ -182,5 +182,5 @@ def test_missing_values_are_refused_rather_than_silently_swept():
     frame = pd.DataFrame(
         {"value": values}, index=pd.date_range("2020-01-01", periods=N)
     )
-    with pytest.raises(ValueError, match="missing values"):
+    with pytest.raises(ValueError, match="missing value"):
         sizer_analysis(frame)
