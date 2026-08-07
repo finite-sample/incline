@@ -533,3 +533,65 @@ def test_unsupported_derivative_order_is_refused(name):
     unsupported = max(smoother.supported_orders) + 1
     with pytest.raises(ValueError, match=r"order|derivative"):
         smoother.fit(AXIS, noisy(), order=unsupported)
+
+
+@pytest.mark.parametrize("name", ALL_NAMES)
+def test_missing_values_are_refused_by_every_smoother(name):
+    """A gapped series has no honest uncertainty, so it is refused at the door.
+
+    Every route to a standard error gives a wrong answer on a gapped series
+    rather than failing: the noise estimators splice across the gap, the block
+    bootstrap draws blocks spanning it, the L1 penalty fraction lands on NaN and
+    falls back to an absolute penalty, and the linearity check compares an
+    all-NaN product, finds nothing finite and returns without checking.
+    """
+    y = noisy()
+    y[40] = np.nan
+    with pytest.raises(ValueError, match="missing values"):
+        build(name).fit(AXIS, y, order=1, se=True)
+
+
+def test_the_refusal_names_the_count_and_the_remedy():
+    """An error that does not say what to do just relocates the problem."""
+    y = noisy()
+    y[10:15] = np.nan
+    with pytest.raises(ValueError, match="missing values") as raised:
+        SavitzkyGolay(window_length=15).fit(AXIS, y, order=1)
+    message = str(raised.value)
+    assert "5 missing values" in message
+    assert "interpolate" in message
+    assert "dropna" in message
+
+
+def test_a_gap_can_no_longer_inflate_the_noise_estimate():
+    """Regression: dropping a gap and differencing across it reads as noise.
+
+    On a trending series a 20-point gap took the estimated noise level from
+    0.286 to 1.782 and the AR(1) scale to 8.11 with a spurious phi of 0.93.
+    Standard errors six times too wide report a real trend as insignificant,
+    which is worse than refusing, because the caller cannot tell.
+    """
+    from incline.noise import estimate_ar1, rice_sigma
+
+    rng = np.random.default_rng(0)
+    axis = TimeAxis.positional(200)
+    truth = 0.3
+    y = 2.0 * axis.x + rng.normal(0, truth, 200)
+    assert rice_sigma(y) == pytest.approx(truth, rel=0.15)
+
+    gapped = y.copy()
+    gapped[100:120] = np.nan
+    # The estimators themselves are still gap-blind; what changed is that no
+    # public path can reach them with a gap.
+    assert rice_sigma(gapped) > 4 * truth
+    assert estimate_ar1(gapped)[1] > 4 * truth
+    with pytest.raises(ValueError, match="missing values"):
+        SavitzkyGolay(window_length=15).fit(axis, gapped, order=1, se=True)
+
+
+def test_an_infinite_value_is_refused_too():
+    """isfinite, not isnan -- an overflow is just as unusable as a gap."""
+    y = noisy()
+    y[20] = np.inf
+    with pytest.raises(ValueError, match="missing values"):
+        SavitzkyGolay(window_length=15).fit(AXIS, y, order=1)

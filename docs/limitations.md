@@ -170,6 +170,32 @@ as separate tests would be far too conservative. Reading a single cell in
 isolation still overstates confidence; reading persistence across scales is the
 intended use.
 
+## Missing values are refused, not filled in
+
+A series with `NaN` values is rejected rather than estimated. Interpolate or
+drop the gaps first:
+
+```python
+trend = sgolay_trend(df.assign(value=df["value"].interpolate()), se=True)
+```
+
+This is a deliberate refusal, and it is stricter than the package used to be.
+Every route to uncertainty gives a *wrong* answer on a gapped series rather
+than an unavailable one, which is the worse failure because the caller cannot
+see it. The noise estimators drop the gap and take second differences across
+it, reading the resulting jump as noise: on a trending series with a 20-point
+gap that moved the estimated noise level from 0.286 to 1.782 and the AR(1)
+scale to 8.11, with a spurious autocorrelation of 0.93. Standard errors six
+times too wide report a genuine trend as insignificant.
+
+Interpolating first is not free either — it invents data, and the interval will
+not know that. But it is a choice you make with your eyes open, at a place in
+your own code where you can see it, which the silent version was not.
+
+Estimating on the observed subset against its true irregular axis would be the
+principled alternative, since a gapped regular series *is* an irregular series
+and the package already handles those. That is not implemented.
+
 ## Boundaries
 
 Every smoother has data on one side only at the ends of a series, so intervals

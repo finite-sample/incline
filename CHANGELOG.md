@@ -174,6 +174,21 @@ documented state — never a missing column. Gone: `edge_region`, `changepoint`,
   series could reach roughly 4 GB before evicting anything. The bound is now in
   bytes.
 
+- A series containing `NaN` was accepted and silently mis-estimated. Every
+  route to uncertainty gave a wrong answer rather than an unavailable one: the
+  noise estimators dropped the gap and took second differences across it, which
+  on a trending series with a 20-point gap moved the estimated noise level from
+  0.286 to 1.782 and the AR(1) scale to 8.11 with a spurious autocorrelation of
+  0.93 — standard errors six times too wide, reporting a real trend as
+  insignificant. The block bootstrap drew blocks spanning the gap;
+  `L1TrendFilter`'s `lambda_fraction` landed on `NaN` and silently fell back to
+  an absolute penalty of 1.0, so a scale sweep did nothing; `local_sigma`
+  convolved one missing value across 27 neighbors; and `verify_linearity`
+  compared an all-`NaN` product, found nothing finite, and returned without
+  checking, so a wrong operator passed its safety check. Non-finite values are
+  now refused at the fit layer, where non-finite *times* were already refused,
+  with a message naming the count and the remedy.
+
 - A `PeriodIndex` was rejected, though monthly and quarterly series are
   ordinarily indexed that way. It is now read as a time axis.
 - An index carrying no time information — strings, categories — surfaced a raw

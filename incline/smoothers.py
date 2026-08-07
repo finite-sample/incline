@@ -311,6 +311,31 @@ class Smoother(ABC):
             )
         if len(y) != axis.n:
             raise ValueError(f"y has {len(y)} values but the axis has {axis.n} points")
+        missing = int(np.sum(~np.isfinite(y)))
+        if missing:
+            # Refused here, once, for the same reason TimeAxis refuses a
+            # non-finite time: every route to uncertainty silently gives the
+            # wrong answer on a gapped series rather than failing.
+            #
+            # The noise estimators drop the gap and second-difference across
+            # it, which reads the resulting jump as noise -- on a trending
+            # series with a 20-point gap that took sigma from 0.286 to 1.782
+            # and the AR(1) scale to 8.11, so real trends are reported as
+            # insignificant. The block bootstrap draws blocks spanning the
+            # gap. `L1TrendFilter`'s lambda_fraction lands on NaN and silently
+            # falls back to an absolute penalty of 1.0. `local_sigma`
+            # convolves the NaN over 27 neighbors. And `verify_linearity`
+            # compares an all-NaN `operator @ y`, finds nothing finite and
+            # returns without checking, so a wrong operator passes.
+            #
+            # Estimating on the observed subset against its true irregular
+            # axis would be defensible, but silently reporting a number that
+            # is wrong by 6x is not.
+            raise ValueError(
+                f"{self.name} cannot estimate a derivative from a series with "
+                f"{missing} missing values; interpolate or drop them first "
+                f"(df['value'].interpolate(), or df.dropna())."
+            )
         if self.requires_regular_grid:
             # Once per fit, not once per probe evaluation.
             axis.require_regular(self.name)
