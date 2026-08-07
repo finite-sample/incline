@@ -398,6 +398,22 @@ def test_an_estimated_ar1_scale_does_not_inflate_the_bootstrap():
 
     ratio = float(np.mean(errors) / np.std(estimates))
     assert ratio < 1.6, f"the bootstrap reports {ratio:.2f}x the estimator's spread"
+    # Bounded below as well. This assertion used to carry only the upper bound,
+    # so it could not fail in the direction that matters: a standard error that
+    # is too *small* is what makes intervals under-cover and significance claims
+    # wrong, and nothing here forbade it.
+    #
+    # The floor is 0.5 rather than something near 1 because the measurement says
+    # so. Under AR(1) noise this bootstrap runs low -- 0.59, 0.61 and 0.83 across
+    # three seeds, and 0.72 with coverage 0.817 against a nominal 0.95 over 120
+    # replicates. That is a real shortfall, not a tolerance to widen until it
+    # passes. Compare test_bootstrap_uncertainty.py, where the same ratio under
+    # iid noise averages 0.95 to 1.02. This is a regression guard on a
+    # known-imperfect number, not a claim that the number is right.
+    assert ratio > 0.5, (
+        f"the bootstrap reports {ratio:.2f}x the estimator's spread, so its "
+        "intervals are far too narrow"
+    )
 
 
 def test_a_stated_scale_is_still_adopted_by_the_bootstrap():
