@@ -1,6 +1,10 @@
-"""Monte Carlo machinery for the econometric tests.
+"""Incline's Monte Carlo helpers, on top of simcheck.
 
-Two decisions here shape every test that uses this module.
+The generic machinery -- ``MonteCarloResult``, the binomial gates, the replicate
+runner -- lives in `simcheck <https://github.com/finite-sample/simcheck>`_, which
+was extracted from this file. What stays here is the part that is genuinely about
+incline: driving a ``Smoother`` over a ``TimeAxis``, and the two generating
+processes whose true derivative is known exactly.
 
 **Coverage is measured at fixed points, not pooled across the curve.** Whether
 the interval covers at x=40 and whether it covers at x=41 are almost the same
@@ -9,24 +13,51 @@ would multiply the apparent sample size by the number of points while adding
 almost no information, and would make a badly miscalibrated estimator look
 precisely measured. One point per binomial keeps the arithmetic honest.
 
-**Gates are binomial, not hand-picked.** An assertion like ``coverage > 0.85``
-is arbitrary: too loose at ten thousand replicates, too tight at fifty. The
-tolerance here is derived from the replicate count, so the same assertion
-adapts -- it loosens automatically in the fast tier and tightens in the deep
-one, and it states in its failure message how far outside the band the result
-fell.
+**Gates are binomial, not hand-picked.** ``coverage > 0.85`` is arbitrary: too
+loose at ten thousand replicates, too tight at fifty. simcheck derives the
+tolerance from the replicate count, so the same assertion adapts -- it loosens
+automatically in the fast tier and tightens in the deep one, and states in its
+failure message how far outside the band the result fell.
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
+from simcheck import (
+    GATE_SIGMAS,
+    Estimate,
+    MonteCarloResult,
+    assert_count_rate,
+    assert_coverage,
+    assert_proportion,
+    assert_se_calibrated,
+    assert_unbiased,
+    binomial_band,
+)
+from simcheck import monte_carlo as _run_study
 
 from incline.simulate import NoiseGenerator
+
+
+__all__ = [
+    "DEEP_REPS",
+    "FAST_REPS",
+    "GATE_SIGMAS",
+    "MonteCarloResult",
+    "assert_count_rate",
+    "assert_coverage",
+    "assert_proportion",
+    "assert_se_calibrated",
+    "assert_unbiased",
+    "binomial_band",
+    "draw_from_gp_prior",
+    "draw_from_local_linear_trend",
+    "monte_carlo",
+]
 
 
 if TYPE_CHECKING:
@@ -38,104 +69,11 @@ if TYPE_CHECKING:
 FAST_REPS = 100
 DEEP_REPS = int(os.environ.get("INCLINE_MC_REPS", "400"))
 
-# How many binomial standard errors a result may sit from nominal before it
-# counts as miscalibrated. Three is loose enough that a correct estimator
-# essentially never trips it, and tight enough to catch a 20% error in a
-# standard error at the deep replicate count.
-GATE_SIGMAS = 3.0
 
-
-@dataclass(frozen=True)
-class MonteCarloResult:
-    """Sampling behavior of an estimator at one point.
-
-    Attributes:
-        estimates: The estimate from each replicate.
-        standard_errors: The reported standard error from each replicate.
-        covered: Whether each replicate's interval contained the truth.
-        rejected: Whether each replicate flagged a significant trend.
-        truth: The true derivative at the point.
-    """
-
-    estimates: npt.NDArray[np.float64]
-    standard_errors: npt.NDArray[np.float64]
-    covered: npt.NDArray[np.bool_]
-    rejected: npt.NDArray[np.bool_]
-    truth: float
-
-    @property
-    def reps(self) -> int:
-        """Number of replicates."""
-        return len(self.estimates)
-
-    @property
-    def bias(self) -> float:
-        """Mean deviation of the estimate from the truth."""
-        return float(np.mean(self.estimates) - self.truth)
-
-    @property
-    def sampling_sd(self) -> float:
-        """The estimator's actual spread across replicates."""
-        return float(np.std(self.estimates, ddof=1))
-
-    @property
-    def reported_se(self) -> float:
-        """The standard error the estimator claims, on average."""
-        return float(np.mean(self.standard_errors))
-
-    @property
-    def se_ratio(self) -> float:
-        """Claimed standard error over actual spread. One means calibrated."""
-        return self.reported_se / self.sampling_sd if self.sampling_sd else np.nan
-
-    @property
-    def bias_t(self) -> float:
-        """Bias in units of its own standard error.
-
-        The Monte Carlo estimate of the mean has standard error
-        ``sampling_sd / sqrt(reps)``, so this is a t statistic for the null
-        that the estimator is unbiased.
-        """
-        if not self.sampling_sd:
-            return 0.0
-        return self.bias / (self.sampling_sd / np.sqrt(self.reps))
-
-    @property
-    def coverage(self) -> float:
-        """Fraction of replicates whose interval contained the truth."""
-        return float(np.mean(self.covered))
-
-    @property
-    def rejection_rate(self) -> float:
-        """Fraction of replicates that flagged a significant trend."""
-        return float(np.mean(self.rejected))
-
-    def summary(self, label: str) -> str:
-        """A one-line report, for printing a table of results."""
-        return (
-            f"{label:34s} bias={self.bias:+9.5f} t={self.bias_t:+6.2f} "
-            f"SE/MC={self.se_ratio:5.3f} cover={self.coverage:.3f} "
-            f"reject={self.rejection_rate:.3f}"
-        )
-
-
-def binomial_band(
-    nominal: float, reps: int, sigmas: float = GATE_SIGMAS
-) -> tuple[float, float]:
-    """The interval a well-calibrated rate should land in.
-
-    Args:
-        nominal: The rate the estimator claims, e.g. 0.95 for coverage.
-        reps: Number of replicates.
-        sigmas: How many binomial standard errors of slack to allow.
-
-    Returns:
-        Lower and upper bounds, clipped to [0, 1].
-    """
-    spread = sigmas * np.sqrt(nominal * (1 - nominal) / reps)
-    return max(0.0, nominal - spread), min(1.0, nominal + spread)
-
-
+# The old `monte_carlo` drew every replicate from one shared generator, so
+# replicate 400 depended on every draw before it. simcheck's runner spawns an
+# independent generator per replicate instead, which is why the wrapper below is
+# a translation layer rather than a loop.
 def monte_carlo(
     smoother: Smoother,
     axis: TimeAxis,
@@ -148,7 +86,7 @@ def monte_carlo(
     seed: int = 4,
     **fit_kwargs,
 ) -> MonteCarloResult:
-    """Refit an estimator over many noise draws and record what it does.
+    """Refit a smoother over many noise draws and record what it does.
 
     Args:
         smoother: The estimator under test.
@@ -163,76 +101,30 @@ def monte_carlo(
         **fit_kwargs: Forwarded to ``smoother.fit``, e.g. ``noise='ar1'``.
 
     Returns:
-        The recorded sampling behavior.
+        The recorded sampling behaviour.
     """
-    rng = np.random.default_rng(seed)
     n = axis.n
     target = float(true_derivative[point])
 
-    estimates = np.empty(reps)
-    errors = np.empty(reps)
-    covered = np.zeros(reps, dtype=bool)
-    rejected = np.zeros(reps, dtype=bool)
-
-    for i in range(reps):
+    def replicate(rng: np.random.Generator) -> Estimate:
         noise = (
             NoiseGenerator.white(n, sigma, rng)
             if phi == 0.0
             else NoiseGenerator.ar1(n, phi, sigma, rng)
         )
         fitted = smoother.fit(axis, truth + noise, order=1, se=True, **fit_kwargs)
-        estimates[i] = fitted.derivative[point]
-        errors[i] = fitted.se[point] if fitted.se is not None else np.nan
-        if fitted.ci_lower is not None and fitted.ci_upper is not None:
-            covered[i] = fitted.ci_lower[point] <= target <= fitted.ci_upper[point]
-        rejected[i] = bool(fitted.significant[point])
+        has_interval = fitted.ci_lower is not None and fitted.ci_upper is not None
+        return Estimate(
+            value=float(fitted.derivative[point]),
+            standard_error=(
+                float(fitted.se[point]) if fitted.se is not None else float("nan")
+            ),
+            lower=float(fitted.ci_lower[point]) if has_interval else None,
+            upper=float(fitted.ci_upper[point]) if has_interval else None,
+            rejected=bool(fitted.significant[point]),
+        )
 
-    return MonteCarloResult(estimates, errors, covered, rejected, target)
-
-
-def assert_unbiased(result: MonteCarloResult, label: str = "") -> None:
-    """Fail if the estimator's mean is distinguishable from the truth.
-
-    Args:
-        result: A completed Monte Carlo study.
-        label: Included in the failure message.
-
-    Raises:
-        AssertionError: If the bias t statistic exceeds the gate.
-    """
-    assert abs(result.bias_t) < GATE_SIGMAS, (
-        f"{label}: bias {result.bias:+.6f} is {result.bias_t:+.2f} standard "
-        f"errors from zero over {result.reps} replicates "
-        f"(sampling sd {result.sampling_sd:.5f})"
-    )
-
-
-def assert_rate(
-    successes: int | float,
-    reps: int,
-    nominal: float,
-    label: str = "",
-    sigmas: float = GATE_SIGMAS,
-) -> None:
-    """Fail if an observed rate is inconsistent with the claimed one.
-
-    Args:
-        successes: Number of successes, or the rate itself.
-        reps: Number of replicates.
-        nominal: The claimed rate.
-        label: Included in the failure message.
-        sigmas: Slack, in binomial standard errors.
-
-    Raises:
-        AssertionError: If the observed rate falls outside the band.
-    """
-    observed = successes / reps if successes > 1 else float(successes)
-    low, high = binomial_band(nominal, reps, sigmas)
-    assert low <= observed <= high, (
-        f"{label}: observed rate {observed:.3f} outside the {sigmas:g}-sigma "
-        f"band [{low:.3f}, {high:.3f}] for a nominal {nominal:.3f} "
-        f"over {reps} replicates"
-    )
+    return _run_study(replicate, truth=target, reps=reps, seed=seed)
 
 
 def draw_from_gp_prior(
@@ -307,19 +199,3 @@ def draw_from_local_linear_trend(
         slope[t] = slope[t - 1] + rng.normal(0, slope_sd)
         level[t] = level[t - 1] + slope[t - 1] + rng.normal(0, level_sd)
     return level + rng.normal(0, observation_sd, n), slope
-
-
-def assert_coverage(
-    result: MonteCarloResult, nominal: float = 0.95, label: str = ""
-) -> None:
-    """Fail if interval coverage is inconsistent with the nominal level.
-
-    Args:
-        result: A completed Monte Carlo study.
-        nominal: The claimed confidence level.
-        label: Included in the failure message.
-
-    Raises:
-        AssertionError: If coverage falls outside the binomial band.
-    """
-    assert_rate(result.coverage, result.reps, nominal, f"{label} coverage")

@@ -22,7 +22,7 @@ import pytest
 from incline import smoothers as sm
 from incline.axis import TimeAxis
 from incline.noise import Heteroskedastic, local_sigma
-from tests._statistics import DEEP_REPS, FAST_REPS, assert_rate
+from tests._statistics import DEEP_REPS, FAST_REPS, assert_proportion
 
 
 N = 160
@@ -85,7 +85,7 @@ def test_coverage_survives_non_gaussian_noise(shape, reps, capsys):
             f"  robustness/{shape:19s} coverage={result['coverage']:.3f} "
             f"SE/MC={result['ratio']:.3f}"
         )
-    assert_rate(result["coverage"], reps, 0.95, f"{shape} coverage")
+    assert_proportion(result["coverage"], reps, 0.95, f"{shape} coverage")
 
 
 @pytest.mark.parametrize("reps", TIERS)
@@ -149,7 +149,9 @@ def test_modelling_the_varying_scale_repairs_it(reps, capsys):
         assert 0.75 < results[p]["ratio"] < 1.35, (
             f"at point {p} the reported SE is {results[p]['ratio']:.3f}x the spread"
         )
-        assert_rate(results[p]["coverage"], reps, 0.95, f"heteroskedastic point {p}")
+        assert_proportion(
+            results[p]["coverage"], reps, 0.95, f"heteroskedastic point {p}"
+        )
 
 
 def test_local_sigma_tracks_a_changing_scale():

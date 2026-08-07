@@ -27,7 +27,7 @@ from incline.process import GaussianProcess, StateSpace
 from tests._statistics import (
     DEEP_REPS,
     FAST_REPS,
-    assert_rate,
+    assert_count_rate,
     draw_from_gp_prior,
     draw_from_local_linear_trend,
 )
@@ -83,7 +83,7 @@ def test_gaussian_process_credible_intervals_cover_under_its_prior(reps, capsys)
             f"  gp/prior-calibration coverage={hits / reps:.3f} "
             f"mean_se={np.mean(widths):.4f} reps={reps}"
         )
-    assert_rate(hits, reps, 0.95, "gp credible-interval coverage")
+    assert_count_rate(hits, reps, 0.95, "gp credible-interval coverage")
 
 
 @pytest.mark.parametrize("reps", TIERS)

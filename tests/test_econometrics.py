@@ -43,7 +43,7 @@ from tests._statistics import (
     DEEP_REPS,
     FAST_REPS,
     assert_coverage,
-    assert_rate,
+    assert_proportion,
     assert_unbiased,
     binomial_band,
     monte_carlo,
@@ -223,7 +223,7 @@ def test_size_under_no_trend(smoother, coefficients, reps, capsys):
     result = monte_carlo(smoother, AXIS, flat, zero, POINT, reps, sigma=SIGMA)
     with capsys.disabled():
         print("  " + result.summary(f"size/{smoother.name}"))
-    assert_rate(result.rejection_rate, reps, 0.05, f"{smoother.name} size")
+    assert_proportion(result.rejection_rate, reps, 0.05, f"{smoother.name} size")
 
 
 @pytest.mark.parametrize("reps", TIERS)
