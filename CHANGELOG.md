@@ -140,6 +140,13 @@ documented state — never a missing column. Gone: `edge_region`, `changepoint`,
   interval whatever level was requested, because the pipeline bootstrap
   hard-coded its percentiles.
 
+- A `PeriodIndex` was rejected, though monthly and quarterly series are
+  ordinarily indexed that way. It is now read as a time axis.
+- An index carrying no time information — strings, categories — surfaced a raw
+  `could not convert string to float: 'r0'` from numpy, naming neither the cause
+  nor the remedy. It now says to use a datetime, period or numeric index, or to
+  pass `time_column=`.
+
 A scale you state explicitly is always used. A scale the package *estimates* as
 a plain scalar is left to the bootstrap's own difference-based estimate:
 `estimate_ar1`'s sigma exists to pair with a full AR(1) covariance and runs

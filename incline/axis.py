@@ -51,19 +51,38 @@ class TimeAxis:
         """Build an axis from a pandas index.
 
         Args:
-            index: A ``DatetimeIndex`` (converted to days from the start) or
-                any numeric index.
+            index: A ``DatetimeIndex`` or ``PeriodIndex`` (converted to days
+                from the start) or any numeric index.
 
         Returns:
             The corresponding TimeAxis.
+
+        Raises:
+            ValueError: If the index carries no time information.
         """
+        if isinstance(index, pd.PeriodIndex):
+            # Monthly and quarterly series are ordinarily indexed this way; the
+            # period's start is the point the observation belongs to.
+            index = index.to_timestamp()
+
         if isinstance(index, pd.DatetimeIndex):
             values = np.asarray(
                 (index - index[0]).total_seconds() / 86400.0, dtype=np.float64
             )
             unit = "days"
         else:
-            values = np.asarray(index, dtype=np.float64)
+            try:
+                values = np.asarray(index, dtype=np.float64)
+            except (TypeError, ValueError) as exc:
+                # Say what to do. Reaching numpy with a string index otherwise
+                # surfaces "could not convert string to float: 'r0'", which
+                # names neither the cause nor the remedy.
+                raise ValueError(
+                    f"Cannot read a time axis from a {type(index).__name__} of "
+                    f"dtype {index.dtype}. Use a DatetimeIndex, a PeriodIndex "
+                    f"or a numeric index, or pass time_column= naming a "
+                    f"numeric column."
+                ) from exc
             unit = "index"
         return cls._build(values, unit)
 

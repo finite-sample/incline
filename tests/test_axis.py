@@ -141,3 +141,42 @@ def test_key_distinguishes_axes_and_repeats_for_equal_ones():
     assert first.key() == same.key()
     assert first.key() != other.key()
     assert hash(first.key()) == hash(same.key())
+
+
+def test_period_index_is_a_time_axis():
+    """Monthly and quarterly series are ordinarily indexed by period.
+
+    Rejecting them sent numpy a Period object and surfaced
+    "float() argument must be ... not 'Period'", when the index carries
+    perfectly good time information.
+    """
+    axis = TimeAxis.from_index(pd.period_range("2020-01", periods=6, freq="M"))
+    assert axis.unit == "days"
+    # January to February is 31 days; the axis is in days from the start.
+    assert axis.x[1] == pytest.approx(31.0)
+    assert axis.n == 6
+
+
+def test_quarterly_period_index_spacing():
+    """The same, at a coarser frequency."""
+    axis = TimeAxis.from_index(pd.period_range("2020Q1", periods=4, freq="Q"))
+    assert axis.x[1] == pytest.approx(91.0)
+
+
+@pytest.mark.parametrize(
+    ("label", "index"),
+    [
+        ("strings", pd.Index(["a", "b", "c", "d"])),
+        ("categorical", pd.CategoricalIndex(list("abcd"))),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_a_non_time_index_says_what_to_do(label, index):
+    """An index with no time information must fail with a usable message.
+
+    It previously reached numpy and produced "could not convert string to
+    float: 'a'", which names neither the cause nor the remedy.
+    """
+    del label
+    with pytest.raises(ValueError, match="time_column"):
+        TimeAxis.from_index(index)
