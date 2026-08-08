@@ -25,20 +25,19 @@ on:
   # Every study is seeded -- `_statistics.py` fixes seed=4, the bootstrap
   # studies use default_rng(seed0 + i) -- so this tier is deterministic. The
   # same code against the same dependencies produces the same numbers, and a
-  # red run means something actually changed rather than that the dice came up
-  # differently. That is what makes the two triggers below worth having.
+  # red run means something actually changed.
+  #
+  # Both halves of that are pinned, which is why there is no schedule here.
+  # `uv.lock` is committed and `uv sync` honours it, so CI does not resolve
+  # newer numpy/scipy/statsmodels behind our backs; dependency updates arrive
+  # as Dependabot pull requests (`package-ecosystem: "uv"`, weekly) and are
+  # reviewed like any other change. Nothing moves between commits, so a
+  # scheduled run would spend 45 minutes re-deriving the previous answer.
 
-  # Dependency drift is the one thing that moves a deterministic result without
-  # a commit: `uv sync` resolves the latest numpy/scipy/statsmodels. Weekly,
-  # because drift is slow and a daily run is 45 minutes to re-learn the same
-  # answer.
-  schedule:
-    - cron: "0 4 * * 1"
-
-  # On pull requests the tier costs about 45 minutes, so it is opt-in: add the
-  # `deep-tier` label to a pull request that could move calibration. Anything
-  # touching the uncertainty machinery, the noise models or a smoother's
-  # operator deserves it; a docs change or a typo fix does not.
+  # About 45 minutes, so it is opt-in on pull requests: add the `deep-tier`
+  # label to anything that could move calibration -- the uncertainty
+  # machinery, the noise models, a smoother's operator, or a Dependabot bump
+  # of numpy/scipy/statsmodels. A docs change does not need it.
   pull_request:
     branches: [main, master]
     types: [opened, synchronize, reopened, labeled]

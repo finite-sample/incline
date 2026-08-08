@@ -40,7 +40,7 @@ jobs:
         
     - name: Run tests with pytest
       # The deep Monte Carlo tier is marked slow and runs in monte-carlo.yml:
-      # weekly, on demand, and on pull requests labelled `deep-tier`.
+      # on demand, and on pull requests labelled `deep-tier`.
       run: uv run pytest -m "not slow" --cov=incline --cov-report=xml
         
     - name: Upload coverage to Codecov
