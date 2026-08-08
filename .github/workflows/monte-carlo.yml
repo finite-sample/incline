@@ -22,18 +22,27 @@ name: monte-carlo
 # rather than a summary line.
 
 on:
-  # On the changes that could break calibration, not on a clock. These tests are
-  # stochastic, so running them nightly against unchanged code mostly re-rolls
-  # Monte Carlo variance: a red morning would say something about the sampling
-  # and nothing about the package. Gating pull requests puts the answer where a
-  # decision is actually being made.
+  # Every study is seeded -- `_statistics.py` fixes seed=4, the bootstrap
+  # studies use default_rng(seed0 + i) -- so this tier is deterministic. The
+  # same code against the same dependencies produces the same numbers, and a
+  # red run means something actually changed rather than that the dice came up
+  # differently. That is what makes the two triggers below worth having.
+
+  # Dependency drift is the one thing that moves a deterministic result without
+  # a commit: `uv sync` resolves the latest numpy/scipy/statsmodels. Weekly,
+  # because drift is slow and a daily run is 45 minutes to re-learn the same
+  # answer.
+  schedule:
+    - cron: "0 4 * * 1"
+
+  # On pull requests the tier costs about 45 minutes, so it is opt-in: add the
+  # `deep-tier` label to a pull request that could move calibration. Anything
+  # touching the uncertainty machinery, the noise models or a smoother's
+  # operator deserves it; a docs change or a typo fix does not.
   pull_request:
     branches: [main, master]
-    paths:
-      - "incline/**"
-      - "tests/**"
-      - "pyproject.toml"
-      - ".github/workflows/monte-carlo.yml"
+    types: [opened, synchronize, reopened, labeled]
+
   workflow_dispatch:
     inputs:
       replicates:
@@ -44,6 +53,11 @@ on:
 jobs:
   deep-tier:
     runs-on: ubuntu-latest
+    # Skipped rather than absent on an unlabeled pull request, so the check is
+    # visibly not-run instead of silently missing.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'deep-tier')
     # 26 minutes locally, 43 on a shared runner for 44 tests -- which left
     # 2.5 minutes under the old 45-minute cap, and the 9 bootstrap studies
     # added in c9b6e94 spent it: the first run at 53 tests was killed at
