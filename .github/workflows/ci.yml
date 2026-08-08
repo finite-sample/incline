@@ -23,7 +23,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
         
     - name: Install uv
-      uses: astral-sh/setup-uv@v8.3.2
+      uses: astral-sh/setup-uv@v9.0.0
       with:
         version: "latest"
         
@@ -39,7 +39,8 @@ jobs:
         uv run ruff format --check .
         
     - name: Run tests with pytest
-      # The deep Monte Carlo tier is marked slow and runs on a schedule.
+      # The deep Monte Carlo tier is marked slow and runs in monte-carlo.yml:
+      # on demand, and on pull requests labelled `deep-tier`.
       run: uv run pytest -m "not slow" --cov=incline --cov-report=xml
         
     - name: Upload coverage to Codecov

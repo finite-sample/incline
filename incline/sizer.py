@@ -289,9 +289,11 @@ class SiZer:
             # The count was checked and then the raw series handed on anyway,
             # so a few NaNs produced an all-NaN map that reads as "nothing is
             # trending" rather than "nothing could be computed".
+            gaps = int((~usable).sum())
             raise ValueError(
-                f"SiZer cannot sweep a series with {int((~usable).sum())} "
-                f"missing values; interpolate or drop them first."
+                f"SiZer cannot sweep a series with {gaps} "
+                f"missing value{'' if gaps == 1 else 's'}; "
+                f"interpolate or drop {'it' if gaps == 1 else 'them'} first."
             )
 
         scales = self._scale_grid(axis.n)

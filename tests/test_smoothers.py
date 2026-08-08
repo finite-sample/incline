@@ -398,6 +398,22 @@ def test_an_estimated_ar1_scale_does_not_inflate_the_bootstrap():
 
     ratio = float(np.mean(errors) / np.std(estimates))
     assert ratio < 1.6, f"the bootstrap reports {ratio:.2f}x the estimator's spread"
+    # Bounded below as well. This assertion used to carry only the upper bound,
+    # so it could not fail in the direction that matters: a standard error that
+    # is too *small* is what makes intervals under-cover and significance claims
+    # wrong, and nothing here forbade it.
+    #
+    # The floor is 0.5 rather than something near 1 because the measurement says
+    # so. Under AR(1) noise this bootstrap runs low -- 0.59, 0.61 and 0.83 across
+    # three seeds, and 0.72 with coverage 0.817 against a nominal 0.95 over 120
+    # replicates. That is a real shortfall, not a tolerance to widen until it
+    # passes. Compare test_bootstrap_uncertainty.py, where the same ratio under
+    # iid noise averages 0.95 to 1.02. This is a regression guard on a
+    # known-imperfect number, not a claim that the number is right.
+    assert ratio > 0.5, (
+        f"the bootstrap reports {ratio:.2f}x the estimator's spread, so its "
+        "intervals are far too narrow"
+    )
 
 
 def test_a_stated_scale_is_still_adopted_by_the_bootstrap():
@@ -547,7 +563,7 @@ def test_missing_values_are_refused_by_every_smoother(name):
     """
     y = noisy()
     y[40] = np.nan
-    with pytest.raises(ValueError, match="missing values"):
+    with pytest.raises(ValueError, match="missing value"):
         build(name).fit(AXIS, y, order=1, se=True)
 
 
@@ -555,12 +571,18 @@ def test_the_refusal_names_the_count_and_the_remedy():
     """An error that does not say what to do just relocates the problem."""
     y = noisy()
     y[10:15] = np.nan
-    with pytest.raises(ValueError, match="missing values") as raised:
+    with pytest.raises(ValueError, match="missing value") as raised:
         SavitzkyGolay(window_length=15).fit(AXIS, y, order=1)
     message = str(raised.value)
     assert "5 missing values" in message
     assert "interpolate" in message
     assert "dropna" in message
+
+    y_one = noisy()
+    y_one[10] = np.nan
+    with pytest.raises(ValueError, match="missing value") as single:
+        SavitzkyGolay(window_length=15).fit(AXIS, y_one, order=1)
+    assert "1 missing value;" in str(single.value), str(single.value)
 
 
 def test_a_gap_can_no_longer_inflate_the_noise_estimate():
@@ -585,7 +607,7 @@ def test_a_gap_can_no_longer_inflate_the_noise_estimate():
     # public path can reach them with a gap.
     assert rice_sigma(gapped) > 4 * truth
     assert estimate_ar1(gapped)[1] > 4 * truth
-    with pytest.raises(ValueError, match="missing values"):
+    with pytest.raises(ValueError, match="missing value"):
         SavitzkyGolay(window_length=15).fit(axis, gapped, order=1, se=True)
 
 
@@ -593,5 +615,5 @@ def test_an_infinite_value_is_refused_too():
     """isfinite, not isnan -- an overflow is just as unusable as a gap."""
     y = noisy()
     y[20] = np.inf
-    with pytest.raises(ValueError, match="missing values"):
+    with pytest.raises(ValueError, match="missing value"):
         SavitzkyGolay(window_length=15).fit(AXIS, y, order=1)
