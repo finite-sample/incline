@@ -111,6 +111,12 @@ def _study(name: str, reps: int, seed0: int):
             order=1,
             se=True,
             n_bootstrap=N_BOOTSTRAP,
+            # Seed the resampling too, not just the noise draw. Without this the
+            # bootstrap runs off an unseeded generator and the whole study is
+            # irreproducible: the same input gave se[60] of 0.4411 and then
+            # 0.4756 on two consecutive calls. A gate whose value moves between
+            # runs cannot distinguish a regression from the dice.
+            random_state=seed0 + i,
         )
         estimates[i] = fitted.derivative
         errors[i] = fitted.se
@@ -345,6 +351,7 @@ def test_the_l1_filter_undercovers_at_a_slope_change(reps):
             order=1,
             se=True,
             n_bootstrap=N_BOOTSTRAP,
+            random_state=8000 + i,
         )
         covered += (
             float(fitted.ci_lower[kink]) <= target <= float(fitted.ci_upper[kink])
