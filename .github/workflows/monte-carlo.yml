@@ -22,9 +22,18 @@ name: monte-carlo
 # rather than a summary line.
 
 on:
-  schedule:
-    # 04:00 UTC daily. Nothing depends on the hour; it is off-peak.
-    - cron: "0 4 * * *"
+  # On the changes that could break calibration, not on a clock. These tests are
+  # stochastic, so running them nightly against unchanged code mostly re-rolls
+  # Monte Carlo variance: a red morning would say something about the sampling
+  # and nothing about the package. Gating pull requests puts the answer where a
+  # decision is actually being made.
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "incline/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/monte-carlo.yml"
   workflow_dispatch:
     inputs:
       replicates:
@@ -35,9 +44,12 @@ on:
 jobs:
   deep-tier:
     runs-on: ubuntu-latest
-    # The tier takes 11-14 minutes locally; allow generous headroom on a
-    # shared runner rather than failing on a slow morning.
-    timeout-minutes: 45
+    # 26 minutes locally, 43 on a shared runner for 44 tests -- which left
+    # 2.5 minutes under the old 45-minute cap, and the 9 bootstrap studies
+    # added in c9b6e94 spent it: the first run at 53 tests was killed at
+    # 45m15s mid-pytest. Sized for roughly double the current tier so adding
+    # a study does not silently turn this red again.
+    timeout-minutes: 90
 
     env:
       INCLINE_MC_REPS: ${{ github.event.inputs.replicates || '400' }}
