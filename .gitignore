@@ -76,3 +76,8 @@ venv.bak/
 
 # Project-specific logs
 *.log
+
+# Sphinx build output (py-canon docs workflow layout)
+_site/
+_doctest/
+jupyter_execute/

@@ -36,7 +36,6 @@ from scipy.signal import savgol_coeffs, savgol_filter
 from sklearn.preprocessing import PolynomialFeatures
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
-from .axis import TimeAxis
 from .noise import NoiseModel, resolve_noise
 from .result import Provenance, TrendEstimate
 from .uncertainty import (
@@ -47,9 +46,10 @@ from .uncertainty import (
     verify_linearity,
 )
 
-
 if TYPE_CHECKING:
     from typing import Self
+
+    from .axis import TimeAxis
 
 # Operators depend only on (smoother, axis, order), so they survive across
 # fits. A handful of entries covers a multi-scale sweep or a simulation study.
@@ -68,8 +68,12 @@ def _cache_bytes() -> int:
     return sum(a.nbytes + b.nbytes for a, b in _OPERATOR_CACHE.values())
 
 
-def register(cls: type[Smoother]) -> type[Smoother]:
+def register[S: type[Smoother]](cls: S) -> S:
     """Add a smoother to the registry keyed by its name.
+
+    Typed generically rather than as ``type[Smoother] -> type[Smoother]``:
+    the upcast erased every subclass's synthesized dataclass ``__init__``,
+    so pyright rejected each keyword constructor call in the package.
 
     Args:
         cls: The smoother class.
@@ -638,19 +642,27 @@ class SavitzkyGolay(Smoother):
     ) -> Evaluation:
         """Filter the series and differentiate."""
         window = self._window_for(axis.n)
+        # asarray: scipy annotates savgol_filter with an array union; the
+        # float64 input guarantees float64 output, at no copy.
         return Evaluation(
-            values=savgol_filter(
-                y,
-                window_length=window,
-                polyorder=self.polyorder,
-                delta=axis.delta,
+            values=np.asarray(
+                savgol_filter(
+                    y,
+                    window_length=window,
+                    polyorder=self.polyorder,
+                    delta=axis.delta,
+                ),
+                dtype=np.float64,
             ),
-            derivative=savgol_filter(
-                y,
-                window_length=window,
-                polyorder=self.polyorder,
-                deriv=order,
-                delta=axis.delta,
+            derivative=np.asarray(
+                savgol_filter(
+                    y,
+                    window_length=window,
+                    polyorder=self.polyorder,
+                    deriv=order,
+                    delta=axis.delta,
+                ),
+                dtype=np.float64,
             ),
         )
 

@@ -49,7 +49,6 @@ from tests._statistics import (
     monte_carlo,
 )
 
-
 N = 120
 AXIS = TimeAxis.positional(N)
 SIGMA = 0.5

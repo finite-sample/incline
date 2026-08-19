@@ -32,7 +32,6 @@ from tests._statistics import (
     draw_from_local_linear_trend,
 )
 
-
 TIERS = [
     pytest.param(FAST_REPS, id="fast"),
     pytest.param(DEEP_REPS, id="deep", marks=pytest.mark.slow),

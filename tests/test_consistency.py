@@ -24,7 +24,6 @@ from incline.axis import TimeAxis
 from incline.simulate import NoiseGenerator
 from tests._statistics import DEEP_REPS, FAST_REPS
 
-
 SIGMA = 0.4
 
 TIERS = [

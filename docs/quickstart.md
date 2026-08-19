@@ -28,14 +28,16 @@ An estimate without a standard error is hard to act on. Pass `se=True`:
 ```python
 result = sgolay_trend(df, se=True)
 
-result[[
-    "derivative_value",
-    "derivative_se",
-    "derivative_ci_lower",
-    "derivative_ci_upper",
-    "significant_trend",
-    "se_method",
-]].head()
+result[
+    [
+        "derivative_value",
+        "derivative_se",
+        "derivative_ci_lower",
+        "derivative_ci_upper",
+        "significant_trend",
+        "se_method",
+    ]
+].head()
 ```
 
 It is opt-in because the exact route costs one smoother evaluation per
@@ -69,15 +71,15 @@ Savitzky-Golay, `bandwidth` for LOESS and local polynomials, and so on.
 
 ```python
 from incline import (
-    naive_trend,            # central differences; the baseline to beat
-    sgolay_trend,           # local polynomial on a fixed window
-    local_polynomial_trend, # kernel-weighted local regression
-    loess_trend,            # LOESS
-    pspline_trend,          # penalized smoothing spline
-    spline_trend,           # knot-selecting smoothing spline
-    l1_trend_filter,        # piecewise-polynomial with sparse kinks
-    gp_trend,               # Gaussian process
-    kalman_trend,           # local linear trend state-space model
+    naive_trend,  # central differences; the baseline to beat
+    sgolay_trend,  # local polynomial on a fixed window
+    local_polynomial_trend,  # kernel-weighted local regression
+    loess_trend,  # LOESS
+    pspline_trend,  # penalized smoothing spline
+    spline_trend,  # knot-selecting smoothing spline
+    l1_trend_filter,  # piecewise-polynomial with sparse kinks
+    gp_trend,  # Gaussian process
+    kalman_trend,  # local linear trend state-space model
 )
 ```
 
@@ -86,7 +88,7 @@ If you have no strong preference, let the package pick:
 ```python
 from incline import estimate_trend, select_trend_method
 
-print(select_trend_method(df))          # e.g. 'loess'
+print(select_trend_method(df))  # e.g. 'loess'
 result = estimate_trend(df, method="auto", se=True)
 ```
 

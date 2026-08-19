@@ -26,7 +26,6 @@ import numpy as np
 import numpy.typing as npt
 from scipy.linalg import matmul_toeplitz
 
-
 if TYPE_CHECKING:
     from .axis import TimeAxis
 
@@ -304,10 +303,9 @@ class IID(NoiseModel):
     def estimate(self, y: npt.NDArray[np.float64], axis: TimeAxis) -> NoiseFit:
         """Estimate the noise level, or use the supplied one."""
         del axis
-        stated = self.sigma is not None
         return NoiseFit(
-            sigma=self.sigma if stated else rice_sigma(y),
-            scale_is_stated=stated,
+            sigma=rice_sigma(y) if self.sigma is None else self.sigma,
+            scale_is_stated=self.sigma is not None,
         )
 
 

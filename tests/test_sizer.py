@@ -16,7 +16,6 @@ import pytest
 from incline.sizer import SiZer, SiZerMap, sizer_analysis, trend_with_sizer
 from incline.smoothers import InterpolatingSpline, LocalPolynomial, SavitzkyGolay
 
-
 N = 120
 
 

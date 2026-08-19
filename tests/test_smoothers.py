@@ -27,7 +27,6 @@ from incline.smoothers import (
     build,
 )
 
-
 N = 100
 AXIS = TimeAxis.positional(N)
 

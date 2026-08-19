@@ -68,7 +68,6 @@ from .smoothers import (
     build,
 )
 
-
 try:
     __version__ = version("incline")
 except PackageNotFoundError:  # pragma: no cover - only when running from source

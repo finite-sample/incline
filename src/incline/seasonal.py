@@ -38,7 +38,6 @@ from scipy.fft import fft, fftfreq
 from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.stattools import acf
 
-
 if TYPE_CHECKING:
     from .smoothers import Smoother
 
@@ -150,7 +149,8 @@ def _detect_by_spectrum(
     if n <= 20:
         return None
     try:
-        spectrum = np.abs(fft(signal.detrend(y))[1 : n // 2])
+        # asarray: scipy.fft's uarray-dispatch annotations lose the array type.
+        spectrum = np.abs(np.asarray(fft(signal.detrend(y)))[1 : n // 2])
         frequencies = fftfreq(n)
         if spectrum.size == 0:
             return None
@@ -367,7 +367,7 @@ def _centred_average(
         # ``.to_numpy()`` can hand back a read-only view under pandas 3, and the
         # edge fill below writes into this array.
         trend = np.asarray(
-            pd.Series(y).rolling(window=period, center=True).mean().to_numpy(),
+            pd.Series(y).rolling(window=period, center=True).mean(),
             dtype=float,
         ).copy()
 
