@@ -37,7 +37,7 @@ from incline import spline_trend, sgolay_trend, naive_trend
 import pandas as pd
 
 # Your time series data
-df = pd.DataFrame({'value': [1, 2, 3, 5, 8, 13, 21]})
+df = pd.DataFrame({"value": [1, 2, 3, 5, 8, 13, 21]})
 
 # Estimate trend using spline interpolation
 result = spline_trend(df)

@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- Adopted the py-canon fleet template: reusable CI/docs/release workflows,
+  pre-commit, src/ layout, and the canon ruff/pyright/pydoclint configuration.
+
 ## 1.0.0 — 2026-08-06
 
 A rewrite. Every estimator now reports a standard error, and how it gets one is

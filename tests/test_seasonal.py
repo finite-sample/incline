@@ -23,7 +23,6 @@ from incline.seasonal import (
 )
 from incline.smoothers import PenalizedSpline, SavitzkyGolay
 
-
 N = 200
 
 

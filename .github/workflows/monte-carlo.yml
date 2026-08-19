@@ -2,10 +2,10 @@ name: monte-carlo
 
 # The deep Monte Carlo tier -- 400 replicates rather than 100 -- is where the
 # unbiasedness, coverage, size and power gates have enough precision to mean
-# something. `ci.yml` deselects it with `-m "not slow"` and a comment saying it
-# "runs on a schedule". This is that schedule; until this file existed there was
-# no workflow with a `schedule:` trigger anywhere in the repository, so the deep
-# tier ran nowhere at all.
+# something. The default pytest run deselects it (`addopts = "-m 'not slow'"`
+# in pyproject.toml), which is what py-canon's reusable CI executes; the
+# explicit `-m slow` below overrides that default. Until this file existed
+# there was no workflow that ran the deep tier anywhere at all.
 #
 # Why that matters: at 100 replicates the three-sigma binomial band around a
 # nominal 95% coverage is roughly [0.885, 1.0], which passes an estimator whose
@@ -49,6 +49,9 @@ on:
         required: false
         default: "400"
 
+permissions:
+  contents: read
+
 jobs:
   deep-tier:
     runs-on: ubuntu-latest
@@ -68,10 +71,12 @@ jobs:
       INCLINE_MC_REPS: ${{ github.event.inputs.replicates || '400' }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Set up Python
         run: uv python install 3.12

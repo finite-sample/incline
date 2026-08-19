@@ -17,19 +17,19 @@ this module propagates them.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from scipy.stats import norm, rankdata
 
-from .result import TrendEstimate
-
-
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
+
+    from .result import TrendEstimate
 
 Aggregation = Literal["max", "mean", "median", "last"]
 Weighting = Literal["uniform", "linear", "exponential"]
@@ -155,7 +155,9 @@ def trending(
     Raises:
         ValueError: If identifiers cannot be determined.
     """
-    if isinstance(estimates, dict):
+    # Mapping, not dict: a non-dict Mapping used to fall through to the
+    # sequence branch, which iterates keys and would have ranked strings.
+    if isinstance(estimates, Mapping):
         pairs = list(estimates.items())
     else:
         sequence = list(estimates)
@@ -209,4 +211,7 @@ def trending(
     # series go last instead.
     order = np.nan_to_num(-frame["trend"].to_numpy(dtype=float), nan=np.inf)
     frame["rank"] = rankdata(order, method="ordinal")
-    return frame.sort_values("rank").reset_index(drop=True)[columns]
+    # cast: pandas annotates list-key __getitem__ as a Series/DataFrame union.
+    return cast(
+        "pd.DataFrame", frame.sort_values("rank").reset_index(drop=True)[columns]
+    )

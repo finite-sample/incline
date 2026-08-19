@@ -120,7 +120,7 @@ explorer](https://finite-sample.github.io/incline/uncertainty.html) where you
 can move the smoothing slider and watch the interval trade width for bias.
 
 For background on what "the trend over a window" even means, see
-[this note](http://gbytes.gsood.com/2018/06/22/talking-on-a-tangent/).
+[this note](https://web.archive.org/web/20250124032918/http://gbytes.gsood.com/2018/06/22/talking-on-a-tangent/).
 
 ## Authors
 

@@ -1,21 +1,14 @@
-[build-system]
-requires = ["uv_build>=0.9.13,<0.12.0"]
-build-backend = "uv_build"
-
-[tool.uv.build-backend]
-module-name = "incline"
-module-root = "."
-
 [project]
 name = "incline"
 version = "1.0.0"
 description = "Estimate Trend at a Particular Point in a Noisy Time Series"
-authors = [
-    {name = "Suriyan Laohaprapanon", email = "suriyant@gmail.com"},
-    {name = "Gaurav Sood", email = "gsood07@gmail.com"}
-]
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Suriyan Laohaprapanon", email = "suriyant@gmail.com" },
+    { name = "Gaurav Sood", email = "gsood07@gmail.com" },
+]
 requires-python = ">=3.12"
 keywords = ["time-series", "derivative", "slope", "trend", "savitzky-golay", "spline"]
 classifiers = [
@@ -28,7 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Topic :: Software Development :: Libraries :: Python Modules",
-    "Topic :: Utilities"
+    "Topic :: Utilities",
 ]
 dependencies = [
     "pandas>=2.0.0",
@@ -36,42 +29,7 @@ dependencies = [
     "scipy>=1.10.0",
     "statsmodels>=0.14.0",
     "scikit-learn>=1.3.0",
-    "matplotlib>=3.7.0"
-]
-
-[project.optional-dependencies]
-docs = [
-    "sphinx>=7.0",
-    "furo>=2024.1.29",
-    "myst-parser>=3.0",
-    "linkify-it-py>=2.0",
-    "jupyter-sphinx>=0.5.0",
-    "ipykernel>=6.0.0",
     "matplotlib>=3.7.0",
-    "sphinx-autoapi>=3.0",
-    "sphinx-autodoc-typehints>=2.0"
-]
-
-[dependency-groups]
-dev = [
-    # The Monte Carlo machinery, extracted from this package's own tests.
-    "simcheck @ git+https://github.com/finite-sample/simcheck",
-    "check-manifest",
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "ruff>=0.7.0",
-    "pre-commit>=3.0",
-    "jupyter",
-    "matplotlib",
-    "vulture>=2.16",
-]
-test = [
-    # The Monte Carlo machinery, extracted from this package's own tests.
-    "simcheck @ git+https://github.com/finite-sample/simcheck",
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "coverage",
-    "ruff>=0.7.0"
 ]
 
 [project.urls]
@@ -80,148 +38,85 @@ Documentation = "https://finite-sample.github.io/incline/"
 Repository = "https://github.com/finite-sample/incline"
 Issues = "https://github.com/finite-sample/incline/issues"
 
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13"]
+build-backend = "uv_build"
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = "--cov=incline --cov-report=term-missing -v"
-markers = [
-    "slow: Monte Carlo calibration; run with -m slow or deselect with -m 'not slow'",
+[dependency-groups]
+dev = [
+    "ruff>=0.14",
+    "pyright>=1.1.390",
+    "pydoclint>=0.5",
+    "pre-commit>=4",
+    { include-group = "test" },
 ]
-
-[tool.coverage.run]
-source = ["incline"]
-omit = ["*/tests/*"]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "if self.debug:",
-    "if settings.DEBUG",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if 0:",
-    "if __name__ == .__main__.:"
+test = [
+    # The Monte Carlo machinery, extracted from this package's own tests.
+    "simcheck @ git+https://github.com/finite-sample/simcheck",
+    "pytest>=8",
+    "pytest-cov>=6",
+]
+docs = [
+    "sphinx>=8",
+    "py-canon @ git+https://github.com/gojiplus/py-canon@v1",
+    "furo",
+    "myst-parser",
+    "sphinx-copybutton",
+    # docs/examples_executable/ pages run their code at build time.
+    "jupyter-sphinx>=0.5.0",
+    "ipykernel>=6.0.0",
 ]
 
 [tool.ruff]
 line-length = 88
 target-version = "py312"
-exclude = [
-  ".git",
-  "__pycache__",
-  "build",
-  "dist",
-  ".venv",
-  "docs",
-  ".eggs",
-  "*.egg-info",
-  "*.ipynb"
-]
+# The example notebook is a demo, not library code.
+extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
-# Enable comprehensive rule set for style and quality
+external = ["DOC"]
 select = [
-  "E",   # pycodestyle errors
-  "W",   # pycodestyle warnings
-  "F",   # pyflakes
-  "I",   # isort
-  "B",   # flake8-bugbear
-  "C4",  # flake8-comprehensions
-  "UP",  # pyupgrade
-  "N",   # pep8-naming
-  "D",   # pydocstyle (docstrings)
-  "S",   # bandit (security)
-  "T20", # flake8-print
-  "PT",  # flake8-pytest-style
-  "RUF", # ruff-specific rules
+    "E", "W", "F", "I", "B", "C4", "UP", "N", "D", "S", "SIM", "T20", "PT", "RUF",
+    "PTH", "RET", "PIE", "FURB", "PERF", "DTZ", "LOG", "G", "TC", "FLY",
+    "RSE", "SLOT", "FA", "A", "EXE", "ICN", "PGH", "PLE", "ARG", "SLF",
 ]
-
-ignore = [
-  "E501",  # line too long (handled by formatter)
-  "B008",  # do not perform function calls in argument defaults
-  "D100",  # missing docstring in public module
-  "D101",  # missing docstring in public class
-  "D102",  # missing docstring in public method
-  "D103",  # missing docstring in public function
-  "D104",  # missing docstring in public package
-  "D105",  # missing docstring in magic method
-  "S101",  # use of assert (allowed in tests)
-]
-
-[tool.ruff.lint.per-file-ignores]
-# Package init files
-"__init__.py" = ["F401", "D104"]
-
-# Test files - more relaxed rules
-"tests/*" = [
-  "S101",   # assert allowed in tests
-  "F841",   # unused variable (test artifacts)
-  "D",      # no docstring requirements
-  "T20",    # print statements allowed
-  "N",      # naming conventions relaxed
-]
-
-# Example files - demo clarity over strict style
-"examples/*" = [
-  "E402",   # imports not at top
-  "F841",   # unused variables for illustration
-  "E722",   # bare except for simple examples
-  "T20",    # print statements for output
-  "D",      # no docstring requirements
-]
-
-# Documentation files
-"docs/*" = [
-  "D",      # no docstring requirements
-  "T20",    # print statements allowed
-]
-
-[tool.ruff.lint.isort]
-known-first-party = ["incline"]
-force-single-line = false
-lines-after-imports = 2
+# D203/D213: the google convention the fleet standard picks. W191/D206/D300:
+# ruff's own docs list these as always incompatible with `ruff format`, which
+# the standard also runs.
+ignore = ["D203", "D213", "W191", "D206", "D300"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
+[tool.ruff.lint.per-file-ignores]
+# Unused fixture arguments and private-member access are how tests are written.
+# T20: the Monte Carlo tests print coverage/standard-error diagnostics under
+# capsys.disabled(); monte-carlo.yml runs with -rA precisely to capture them.
+"tests/**" = ["S101", "D", "ARG", "SLF", "T20"]
+"docs/**" = ["D"]
 
-[tool.deptry]
-# Treat the "docs" optional dependency group as dev dependencies
-pep621_dev_dependency_groups = ["docs"]
-# Extend default excludes to include docs directory
-extend_exclude = ["docs"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The deep Monte Carlo tier takes ~45 minutes; monte-carlo.yml opts back in
+# with an explicit `-m slow`, which overrides this default.
+addopts = "-m 'not slow'"
+markers = [
+    "slow: Monte Carlo calibration; run with -m slow or deselect with -m 'not slow'",
+]
+
+[tool.coverage.run]
+source = ["src"]
 
 [tool.pydoclint]
-paths = ["incline"]
 style = "google"
-exclude = [".git", "__pycache__", "build", "dist", ".venv", "docs", ".eggs", "*.egg-info", "*.ipynb"]
-require-return-section-when-returning-nothing = false
-require-yield-section-when-yielding-nothing = false
-arg-type-hints-in-signature = true
 arg-type-hints-in-docstring = false
 check-return-types = false
+check-class-attributes = false
+allow-init-docstring = true
+exclude = '\.venv|tests|docs'
 
 [tool.pyright]
-include = ["incline", "tests"]
-exclude = [
-  "**/__pycache__",
-  ".venv",
-  "docs",
-  "build",
-  "dist",
-  "*.egg-info"
-]
-reportMissingImports = true
-reportMissingTypeStubs = false
-pythonVersion = "3.12"
-venvPath = "."
-venv = ".venv"
+include = ["src"]
+typeCheckingMode = "standard"
+
+[tool.preen]

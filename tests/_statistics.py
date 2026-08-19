@@ -42,7 +42,6 @@ from simcheck import monte_carlo as _run_study
 
 from incline.simulate import NoiseGenerator
 
-
 __all__ = [
     "DEEP_REPS",
     "FAST_REPS",

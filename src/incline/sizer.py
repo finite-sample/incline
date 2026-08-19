@@ -34,12 +34,12 @@ import numpy.typing as npt
 import pandas as pd
 
 from .axis import TimeAxis
-from .noise import NoiseModel
 from .smoothers import LocalPolynomial, Smoother
-
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
+
+    from .noise import NoiseModel
 
 # Significance codes stored in the map.
 DECREASING = -1

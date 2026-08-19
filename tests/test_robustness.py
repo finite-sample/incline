@@ -24,7 +24,6 @@ from incline.axis import TimeAxis
 from incline.noise import Heteroskedastic, local_sigma
 from tests._statistics import DEEP_REPS, FAST_REPS, assert_proportion
 
-
 N = 160
 AXIS = TimeAxis.positional(N)
 TRUTH = 0.7 - 0.4 * AXIS.x  # linear, so in span: bias is exactly zero

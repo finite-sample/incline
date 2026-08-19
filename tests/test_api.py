@@ -18,7 +18,6 @@ from incline import api
 from incline.result import CORE_COLUMNS
 from incline.smoothers import SMOOTHERS
 
-
 N = 80
 
 ESTIMATORS = [

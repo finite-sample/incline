@@ -44,6 +44,7 @@ To verify that incline is installed correctly, you can run:
 
 ```python
 import incline
+
 print(incline.__version__)
 ```
 
@@ -53,7 +54,7 @@ Or test with a simple example:
 from incline import naive_trend
 import pandas as pd
 
-df = pd.DataFrame({'value': [1, 2, 3, 4, 5]})
+df = pd.DataFrame({"value": [1, 2, 3, 4, 5]})
 result = naive_trend(df)
 print(result)
 ```
