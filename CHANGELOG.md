@@ -1,11 +1,6 @@
 # Changelog
 
-## [Unreleased]
-
-- Adopted the py-canon fleet template: reusable CI/docs/release workflows,
-  pre-commit, src/ layout, and the canon ruff/pyright/pydoclint configuration.
-
-## 1.0.0 — 2026-08-06
+## 1.0.0 — 2026-08-19
 
 A rewrite. Every estimator now reports a standard error, and how it gets one is
 decided by what the smoother *is* rather than by what it is called. The claim
@@ -245,6 +240,19 @@ came from resampling autocorrelated estimates as though independent, which was
 the larger error.
 
 ---
+
+### Also in this release
+
+Work done after the rewrite was written up but before anything was published,
+so it ships as part of 1.0.0 rather than as a follow-up:
+
+- Missing-value refusals read correctly when there is a single gap.
+- The bootstrap resamples from a seeded generator, not just the noise draw, so
+  a bootstrap interval is reproducible across runs. Its uncertainty is now
+  tested in both directions.
+- Adopted the py-canon fleet template: reusable CI, docs and release workflows,
+  pre-commit, the `src/` layout, and canon's ruff/pyright/pydoclint
+  configuration.
 
 ## 0.5.0 and earlier
 
