@@ -177,7 +177,7 @@ def test_missing_values_are_refused_rather_than_silently_swept():
     entirely blank -- which reads as "nothing is trending here" rather than
     "nothing could be computed".
     """
-    values = series()["value"].to_numpy()
+    values = series()["value"].to_numpy(copy=True)
     values[17] = np.nan
     frame = pd.DataFrame(
         {"value": values}, index=pd.date_range("2020-01-01", periods=N)
