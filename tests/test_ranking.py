@@ -18,7 +18,6 @@ from incline.axis import TimeAxis
 from incline.ranking import trending
 from incline.smoothers import SavitzkyGolay
 
-
 N = 80
 AXIS = TimeAxis.positional(N)
 

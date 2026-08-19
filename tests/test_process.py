@@ -21,7 +21,6 @@ from incline.process import (
     _prior_derivative_variance,
 )
 
-
 KERNELS = ["rbf", "matern32", "matern52"]
 
 

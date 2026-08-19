@@ -71,7 +71,7 @@ true_derivative = 0.5  # Known true trend
 
 methods = {
     'Naive': naive_result['derivative_value'],
-    'Spline': spline_result['derivative_value'], 
+    'Spline': spline_result['derivative_value'],
     'Savitzky-Golay': sgolay_result['derivative_value']
 }
 
@@ -79,14 +79,14 @@ performance_metrics = {}
 for method_name, derivatives in methods.items():
     # Remove NaN values for fair comparison
     valid_derivatives = derivatives.dropna()
-    
+
     mse = np.mean((valid_derivatives - true_derivative) ** 2)
     bias = np.mean(valid_derivatives - true_derivative)
     std = np.std(valid_derivatives)
-    
+
     performance_metrics[method_name] = {
         'MSE': mse,
-        'Bias': bias, 
+        'Bias': bias,
         'Std Dev': std,
         'Valid Points': len(valid_derivatives)
     }
@@ -113,7 +113,7 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
 ax1.plot(df.index, df['value'], 'ko-', alpha=0.6, markersize=4, label='Original Data')
 for i, s_factor in enumerate(smoothing_factors):
     result = spline_trend(df, function_order=3, s=s_factor)
-    ax1.plot(result.index, result['smoothed_value'], 
+    ax1.plot(result.index, result['smoothed_value'],
             color=colors[i], linewidth=2, label=f's = {s_factor}')
 
 ax1.set_ylabel('Value')
@@ -124,7 +124,7 @@ ax1.grid(True, alpha=0.3)
 # Plot corresponding derivatives
 for i, s_factor in enumerate(smoothing_factors):
     result = spline_trend(df, function_order=3, s=s_factor)
-    ax2.plot(result.index, result['derivative_value'], 
+    ax2.plot(result.index, result['derivative_value'],
             color=colors[i], linewidth=2, label=f's = {s_factor}')
 
 ax2.axhline(y=0.5, color='black', linestyle='--', alpha=0.7, label='True Trend')
@@ -183,7 +183,7 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
 
 # Original data
 ax1.plot(complex_df.index, complex_df['value'], 'k-', alpha=0.6, linewidth=1, label='Original Data')
-ax1.scatter([complex_df.index[i] for i in outlier_indices], 
+ax1.scatter([complex_df.index[i] for i in outlier_indices],
            [complex_df.iloc[i]['value'] for i in outlier_indices],
            color='red', s=50, zorder=5, label='Outliers')
 
@@ -192,7 +192,7 @@ colors_dict = {'Spline (s=5)': 'blue', 'Spline (s=50)': 'red', 'S-G (win=15)': '
 for name, color in colors_dict.items():
     result = methods_results[name]
     if 'smoothed_value' in result.columns:
-        ax1.plot(result.index, result['smoothed_value'], 
+        ax1.plot(result.index, result['smoothed_value'],
                 color=color, linewidth=2, label=name)
 
 ax1.set_ylabel('Value')
@@ -202,13 +202,13 @@ ax1.grid(True, alpha=0.3)
 
 # Compare trend estimates
 for name, result in methods_results.items():
-    ax2.plot(result.index, result['derivative_value'], 
+    ax2.plot(result.index, result['derivative_value'],
             linewidth=2, label=name, alpha=0.8)
 
 ax2.axhline(y=0.3, color='black', linestyle='--', alpha=0.7, label='True Trend (0.3)')
 ax2.axhline(y=0, color='gray', linestyle='-', alpha=0.5)
 ax2.set_ylabel('Trend (derivative)')
-ax2.set_xlabel('Date') 
+ax2.set_xlabel('Date')
 ax2.set_title('Trend Estimates - Different Methods Handle Complexity Differently')
 ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
 ax2.grid(True, alpha=0.3)
@@ -237,7 +237,7 @@ print("   • Spline: Smooth, handles irregular data, parameter sensitive")
 print("   • Savitzky-Golay: Good for regular data, edge effects")
 print()
 print("✅ Parameter Guidelines:")
-print("   • Lower smoothing = follows data more closely") 
+print("   • Lower smoothing = follows data more closely")
 print("   • Higher smoothing = smoother trends, less noise sensitivity")
 print("   • Window size affects boundary behavior")
 print()

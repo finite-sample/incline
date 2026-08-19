@@ -2,51 +2,25 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [master]
   pull_request:
-    branches: [ main, master ]
+  schedule:
+    - cron: "17 6 * * 1"  # weekly: surface ecosystem drift on quiet repos
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ['3.12', '3.13', '3.14']
-        
-    steps:
-    - uses: actions/checkout@v7
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v7.0.0
-      with:
-        python-version: ${{ matrix.python-version }}
-        
-    - name: Install uv
-      uses: astral-sh/setup-uv@v9.0.0
-      with:
-        version: "latest"
-        
-    - name: Install dependencies
-      # `test` is a dependency-group, not an extra, and there has never been an
-      # `advanced` extra. `uv pip install -e ".[test,advanced]"` therefore
-      # installed neither; the test deps only arrived incidentally.
-      run: uv sync --group test
-        
-    - name: Lint with ruff
-      run: |
-        uv run ruff check .
-        uv run ruff format --check .
-        
-    - name: Run tests with pytest
-      # The deep Monte Carlo tier is marked slow and runs in monte-carlo.yml:
-      # on demand, and on pull requests labelled `deep-tier`.
-      run: uv run pytest -m "not slow" --cov=incline --cov-report=xml
-        
-    - name: Upload coverage to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-      uses: codecov/codecov-action@v7
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
+  ci:
+    uses: gojiplus/py-canon/.github/workflows/reusable-ci.yml@v1
+    with:
+      wheel-import: incline
+      # The canon default floor of 3.11 is below requires-python (>=3.12).
+      python-versions: '["3.12", "3.14"]'
+      # Fast tier measured 92% on adoption; the floor leaves modest headroom.
+      coverage-floor: 90
+      run-preen: true

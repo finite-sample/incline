@@ -23,7 +23,6 @@ from incline.axis import TimeAxis
 from incline.noise import AR1, IID
 from incline.process import GaussianProcess
 
-
 warnings.filterwarnings("ignore")
 
 N = 130
@@ -157,7 +156,7 @@ def main() -> None:
         "n": N,
         "x": axis.x.tolist(),
         "scales": SCALES,
-        "series": {k: v for k, v in series.items()},
+        "series": dict(series.items()),
         "methods": {k: {"label": v[0], "linear": None} for k, v in METHODS.items()},
         "panels": {},
     }

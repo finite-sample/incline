@@ -89,15 +89,15 @@ in full, with numbers.
 
 ```python
 from incline import (
-    naive_trend,            # central differences; the baseline to beat
-    sgolay_trend,           # local polynomial on a fixed window
-    local_polynomial_trend, # kernel-weighted local regression
-    loess_trend,            # LOESS
-    pspline_trend,          # penalized smoothing spline
-    spline_trend,           # knot-selecting smoothing spline
-    l1_trend_filter,        # piecewise-polynomial with sparse kinks
-    gp_trend,               # Gaussian process, exact derivative posterior
-    kalman_trend,           # local linear trend state-space model
+    naive_trend,  # central differences; the baseline to beat
+    sgolay_trend,  # local polynomial on a fixed window
+    local_polynomial_trend,  # kernel-weighted local regression
+    loess_trend,  # LOESS
+    pspline_trend,  # penalized smoothing spline
+    spline_trend,  # knot-selecting smoothing spline
+    l1_trend_filter,  # piecewise-polynomial with sparse kinks
+    gp_trend,  # Gaussian process, exact derivative posterior
+    kalman_trend,  # local linear trend state-space model
 )
 ```
 
@@ -120,7 +120,7 @@ explorer](https://finite-sample.github.io/incline/uncertainty.html) where you
 can move the smoothing slider and watch the interval trade width for bias.
 
 For background on what "the trend over a window" even means, see
-[this note](http://gbytes.gsood.com/2018/06/22/talking-on-a-tangent/).
+[this note](https://web.archive.org/web/20250124032918/http://gbytes.gsood.com/2018/06/22/talking-on-a-tangent/).
 
 ## Authors
 

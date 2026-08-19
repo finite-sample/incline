@@ -37,7 +37,6 @@ import numpy.typing as npt
 
 from .noise import rice_sigma
 
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 

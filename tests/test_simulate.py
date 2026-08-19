@@ -25,7 +25,6 @@ from incline.simulate import (
 )
 from incline.smoothers import SavitzkyGolay
 
-
 SMOOTH_TRENDS = [
     pytest.param(PolynomialTrend([1.0, -2.0, 0.5]), id="polynomial"),
     pytest.param(SinusoidalTrend(amplitude=2.0, frequency=0.1), id="sinusoidal"),

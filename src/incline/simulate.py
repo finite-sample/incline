@@ -26,7 +26,6 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -89,7 +88,9 @@ class PolynomialTrend(TrendFunction):
 
     def __call__(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """Evaluate the polynomial."""
-        return np.polyval(self.coefficients[::-1], np.asarray(x, dtype=np.float64))
+        return np.polyval(
+            self.coefficients[::-1], np.asarray(x, dtype=np.float64)
+        ).astype(np.float64, copy=False)
 
     def derivative(
         self, x: npt.NDArray[np.float64], order: int = 1
@@ -102,7 +103,7 @@ class PolynomialTrend(TrendFunction):
         derived = np.polyder(self.coefficients[::-1], order)
         if len(derived) == 0:
             return np.zeros_like(x)
-        return np.polyval(derived, x)
+        return np.polyval(derived, x).astype(np.float64, copy=False)
 
     @property
     def name(self) -> str:

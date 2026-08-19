@@ -32,7 +32,6 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteK
 
 from .smoothers import Evaluation, Smoother, register
 
-
 if TYPE_CHECKING:
     from typing import Self
 
@@ -303,13 +302,18 @@ class GaussianProcess(Smoother):
             kernel=shape + WhiteKernel(noise_level=self.noise_level),
             alpha=1e-10,
             n_restarts_optimizer=self.n_restarts if self.optimize else 0,
-            optimizer="fmin_l_bfgs_b" if self.optimize else None,
+            # None is documented sklearn API for "keep the kernel fixed";
+            # the inferred signature only admits str.
+            optimizer="fmin_l_bfgs_b" if self.optimize else None,  # pyright: ignore[reportArgumentType]
             normalize_y=self.standardize,
         )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model.fit(axis.x.reshape(-1, 1), y - offset)
-        model._incline_offset = offset
+        # Deliberately stashed on the sklearn estimator under an incline-
+        # namespaced name so _posterior can recover the centring offset from
+        # the cached model without a parallel cache keyed the same way.
+        model._incline_offset = offset  # noqa: SLF001  # pyright: ignore[reportAttributeAccessIssue]
         return _remember(key, model)
 
     def _posterior(
@@ -445,7 +449,9 @@ class StateSpace(Smoother):
 
         model = UnobservedComponents(
             y,
-            level="local linear trend",
+            # A model-name string is documented statsmodels API; the inferred
+            # signature only admits the bool default.
+            level="local linear trend",  # pyright: ignore[reportArgumentType]
             seasonal=self.seasonal_periods,
         )
         with warnings.catch_warnings():

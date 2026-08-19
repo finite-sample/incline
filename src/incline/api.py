@@ -14,7 +14,6 @@ import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd
 
 from .axis import TimeAxis
 from .process import GaussianProcess, StateSpace
@@ -31,8 +30,9 @@ from .smoothers import (
     build,
 )
 
-
 if TYPE_CHECKING:
+    import pandas as pd
+
     from .noise import NoiseModel
     from .result import TrendEstimate
 
@@ -446,6 +446,11 @@ def estimate_trend(
 
     Returns:
         The input frame plus the estimate columns.
+
+    Raises:
+        ValueError: If ``method`` names no registered smoother.
+        TypeError: If a keyword matches neither the smoother's constructor
+            nor the uncertainty options.
     """
     if method == "auto":
         method = select_trend_method(df, column_value, time_column)
@@ -457,7 +462,11 @@ def estimate_trend(
     # dataclasses.fields() excludes ClassVar pseudo-fields. __dataclass_fields__
     # includes them, so `name`, `linear`, `supported_orders` and
     # `requires_regular_grid` were being routed into the constructor.
-    constructor_fields = {f.name for f in dataclasses.fields(smoother_class)}
+    # Every registered smoother is a dataclass, but the ABC cannot promise it.
+    constructor_fields = {
+        f.name
+        for f in dataclasses.fields(smoother_class)  # pyright: ignore[reportArgumentType]
+    }
     fit_options = {
         "derivative_order",
         "se",

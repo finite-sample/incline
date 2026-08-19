@@ -58,7 +58,6 @@ from tests._statistics import (
     binomial_band,
 )
 
-
 N = 120
 SIGMA = 0.5
 # Enough resamples for the bootstrap's own noise to sit well under the sampling
@@ -339,7 +338,7 @@ def test_the_l1_filter_undercovers_at_a_slope_change(reps):
         reps: Replicates for this tier.
     """
     kink = 60
-    truth = np.where(_T < kink, 0.02 * _T, 0.02 * kink + 0.20 * (_T - kink))
+    truth = np.where(kink > _T, 0.02 * _T, 0.02 * kink + 0.20 * (_T - kink))
     target = 0.20
 
     covered = 0
