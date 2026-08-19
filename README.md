@@ -89,15 +89,15 @@ in full, with numbers.
 
 ```python
 from incline import (
-    naive_trend,            # central differences; the baseline to beat
-    sgolay_trend,           # local polynomial on a fixed window
-    local_polynomial_trend, # kernel-weighted local regression
-    loess_trend,            # LOESS
-    pspline_trend,          # penalized smoothing spline
-    spline_trend,           # knot-selecting smoothing spline
-    l1_trend_filter,        # piecewise-polynomial with sparse kinks
-    gp_trend,               # Gaussian process, exact derivative posterior
-    kalman_trend,           # local linear trend state-space model
+    naive_trend,  # central differences; the baseline to beat
+    sgolay_trend,  # local polynomial on a fixed window
+    local_polynomial_trend,  # kernel-weighted local regression
+    loess_trend,  # LOESS
+    pspline_trend,  # penalized smoothing spline
+    spline_trend,  # knot-selecting smoothing spline
+    l1_trend_filter,  # piecewise-polynomial with sparse kinks
+    gp_trend,  # Gaussian process, exact derivative posterior
+    kalman_trend,  # local linear trend state-space model
 )
 ```
 
