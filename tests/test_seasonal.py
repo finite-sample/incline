@@ -61,6 +61,7 @@ def test_detection_survives_a_series_too_short_to_analyse():
     assert detect_seasonality(tiny).seasonal is False
 
 
+@pytest.mark.filterwarnings("ignore:Period .* is unusable:UserWarning")
 @pytest.mark.parametrize(
     ("label", "decompose"),
     [
@@ -303,7 +304,10 @@ def test_a_constant_series_reports_no_trend():
         {"value": np.full(60, 4.0)},
         index=pd.date_range("2020-01-01", periods=60, freq="ME"),
     )
-    result = trend_with_deseasonalization(
-        frame, smoother=PenalizedSpline(), se=True, n_bootstrap=20, random_state=0
-    )
+    # A flat series has no residual spread to resample, so no standard error
+    # can be bootstrapped. That warning is the substance of this test.
+    with pytest.warns(UserWarning, match="no estimable noise level"):
+        result = trend_with_deseasonalization(
+            frame, smoother=PenalizedSpline(), se=True, n_bootstrap=20, random_state=0
+        )
     assert not result["significant_trend"].any()

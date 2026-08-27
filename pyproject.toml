@@ -99,9 +99,20 @@ convention = "google"
 testpaths = ["tests"]
 # The deep Monte Carlo tier takes ~45 minutes; monte-carlo.yml opts back in
 # with an explicit `-m slow`, which overrides this default.
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow' --strict-config --strict-markers -ra"
 markers = [
     "slow: Monte Carlo calibration; run with -m slow or deselect with -m 'not slow'",
+]
+minversion = "6"
+log_level = "INFO"
+xfail_strict = true
+filterwarnings = [
+    "error",
+    # Both come out of statsmodels 0.14.6 -- the current release, so there is
+    # no upgrade to take -- running under NumPy 2.5. Nothing in incline sets
+    # an array shape or builds a bare-integer timedelta.
+    "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning",
 ]
 
 [tool.coverage.run]

@@ -101,6 +101,12 @@ def detect_seasonality(
     if n < 8:
         return Seasonality(False, None, 0.0, "none")
 
+    # A flat series has no cycle to find, and every detector divides by its
+    # variance: acf returns all-nan and warns rather than raising, which the
+    # broad except below would then report as a failed check.
+    if np.ptp(y) == 0:
+        return Seasonality(False, None, 0.0, "none")
+
     if max_period is None:
         max_period = min(n // 3, 365)
     max_period = max(max_period, 2)
