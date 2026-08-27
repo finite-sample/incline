@@ -113,6 +113,12 @@ filterwarnings = [
     # an array shape or builds a bare-integer timedelta.
     "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
     "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning",
+    # scipy's FITPACK reports when a smoothing spline hits its iteration cap.
+    # Whether it does is platform-dependent -- ubuntu x86 sees it where macOS
+    # arm64 does not, on the same scipy 1.18.0 -- so a test asserting some
+    # other warning fails only on some runners. Leading `.*` is required: the
+    # message starts with a newline and warning filters anchor at the start.
+    "ignore:(?s).*maximal number of iterations maxit:UserWarning",
 ]
 
 [tool.coverage.run]
