@@ -61,6 +61,7 @@ def test_detection_survives_a_series_too_short_to_analyse():
     assert detect_seasonality(tiny).seasonal is False
 
 
+@pytest.mark.filterwarnings("ignore:Period .* is unusable:UserWarning")
 @pytest.mark.parametrize(
     ("label", "decompose"),
     [
@@ -132,7 +133,11 @@ def test_unknown_method_is_refused():
 @pytest.mark.parametrize("period", [7, 12])
 def test_moving_average_handles_odd_and_even_periods(period):
     """Regression: the odd-period path wrote into a read-only rolling view."""
-    result = moving_average_decompose(seasonal_series(), period=period)
+    # The series keeps its own default cycle on purpose: what varies here is
+    # the decomposition window, odd against even. Threading period into the
+    # data too would change both sides at once.
+    series = seasonal_series()  # preen: allow-dropped-arg
+    result = moving_average_decompose(series, period=period)
     assert result["trend_component"].notna().all()
     assert result["deseasonalized"].notna().all()
 
@@ -144,9 +149,9 @@ def test_moving_average_fills_the_trailing_edge(period):
     Index ``-half`` is the first element of the slice being assigned, so
     reading it propagated NaN across the entire tail.
     """
-    trend = moving_average_decompose(seasonal_series(), period=period)[
-        "trend_component"
-    ]
+    # Same as above: the window varies, the series does not.
+    series = seasonal_series()  # preen: allow-dropped-arg
+    trend = moving_average_decompose(series, period=period)["trend_component"]
     assert trend.notna().all()
     assert np.isfinite(trend.iloc[-1])
     assert np.isfinite(trend.iloc[0])
@@ -303,7 +308,10 @@ def test_a_constant_series_reports_no_trend():
         {"value": np.full(60, 4.0)},
         index=pd.date_range("2020-01-01", periods=60, freq="ME"),
     )
-    result = trend_with_deseasonalization(
-        frame, smoother=PenalizedSpline(), se=True, n_bootstrap=20, random_state=0
-    )
+    # A flat series has no residual spread to resample, so no standard error
+    # can be bootstrapped. That warning is the substance of this test.
+    with pytest.warns(UserWarning, match="no estimable noise level"):
+        result = trend_with_deseasonalization(
+            frame, smoother=PenalizedSpline(), se=True, n_bootstrap=20, random_state=0
+        )
     assert not result["significant_trend"].any()

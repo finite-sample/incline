@@ -101,6 +101,12 @@ def detect_seasonality(
     if n < 8:
         return Seasonality(False, None, 0.0, "none")
 
+    # A flat series has no cycle to find, and every detector divides by its
+    # variance: acf returns all-nan and warns rather than raising, which the
+    # broad except below would then report as a failed check.
+    if np.ptp(y) == 0:
+        return Seasonality(False, None, 0.0, "none")
+
     if max_period is None:
         max_period = min(n // 3, 365)
     max_period = max(max_period, 2)
@@ -423,7 +429,9 @@ def deseasonalize(
             )
 
     if period is None:
-        found = detect_seasonality(df, column_value)
+        # detect_seasonality accepts time_column only to match its neighbours'
+        # signatures and deletes it unread, so forwarding it would say nothing.
+        found = detect_seasonality(df, column_value)  # preen: allow-dropped-arg
         if not found.seasonal:
             # Nothing to remove. Still emit the full schema so that callers
             # never branch on whether a cycle happened to be found.
