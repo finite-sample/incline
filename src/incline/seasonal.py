@@ -429,7 +429,9 @@ def deseasonalize(
             )
 
     if period is None:
-        found = detect_seasonality(df, column_value)
+        # detect_seasonality accepts time_column only to match its neighbours'
+        # signatures and deletes it unread, so forwarding it would say nothing.
+        found = detect_seasonality(df, column_value)  # preen: allow-dropped-arg
         if not found.seasonal:
             # Nothing to remove. Still emit the full schema so that callers
             # never branch on whether a cycle happened to be found.

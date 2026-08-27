@@ -133,7 +133,11 @@ def test_unknown_method_is_refused():
 @pytest.mark.parametrize("period", [7, 12])
 def test_moving_average_handles_odd_and_even_periods(period):
     """Regression: the odd-period path wrote into a read-only rolling view."""
-    result = moving_average_decompose(seasonal_series(), period=period)
+    # The series keeps its own default cycle on purpose: what varies here is
+    # the decomposition window, odd against even. Threading period into the
+    # data too would change both sides at once.
+    series = seasonal_series()  # preen: allow-dropped-arg
+    result = moving_average_decompose(series, period=period)
     assert result["trend_component"].notna().all()
     assert result["deseasonalized"].notna().all()
 
@@ -145,9 +149,9 @@ def test_moving_average_fills_the_trailing_edge(period):
     Index ``-half`` is the first element of the slice being assigned, so
     reading it propagated NaN across the entire tail.
     """
-    trend = moving_average_decompose(seasonal_series(), period=period)[
-        "trend_component"
-    ]
+    # Same as above: the window varies, the series does not.
+    series = seasonal_series()  # preen: allow-dropped-arg
+    trend = moving_average_decompose(series, period=period)["trend_component"]
     assert trend.notna().all()
     assert np.isfinite(trend.iloc[-1])
     assert np.isfinite(trend.iloc[0])
