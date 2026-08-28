@@ -24,3 +24,5 @@ jobs:
       # Fast tier measured 92% on adoption; the floor leaves modest headroom.
       coverage-floor: 90
       run-preen: true
+      test-timeout-minutes: 60
+      wheel-timeout-minutes: 60
