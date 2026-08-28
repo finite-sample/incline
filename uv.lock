@@ -621,6 +621,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "coverage" },
     { name = "pre-commit" },
     { name = "pydoclint" },
     { name = "pyright" },
@@ -639,6 +640,7 @@ docs = [
     { name = "sphinx-copybutton" },
 ]
 test = [
+    { name = "coverage" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "simcheck" },
@@ -656,6 +658,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "coverage", specifier = ">=7.9" },
     { name = "pre-commit", specifier = ">=4" },
     { name = "pydoclint", specifier = ">=0.5" },
     { name = "pyright", specifier = ">=1.1.390" },
@@ -674,6 +677,7 @@ docs = [
     { name = "sphinx-copybutton" },
 ]
 test = [
+    { name = "coverage", specifier = ">=7.9" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=6" },
     { name = "simcheck", git = "https://github.com/finite-sample/simcheck" },

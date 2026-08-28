@@ -51,6 +51,7 @@ dev = [
     { include-group = "test" },
 ]
 test = [
+    "coverage>=7.9",
     # The Monte Carlo machinery, extracted from this package's own tests.
     "simcheck @ git+https://github.com/finite-sample/simcheck",
     "pytest>=8",
@@ -120,6 +121,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
+core = "sysmon"
 source = ["src"]
 
 [tool.pydoclint]
