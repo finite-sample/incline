@@ -111,12 +111,16 @@ def monte_carlo(
             if phi == 0.0
             else NoiseGenerator.ar1(n, phi, sigma, rng)
         )
-        fitted = smoother.fit(axis, truth + noise, order=1, se=True, **fit_kwargs)
+        fitted = smoother.fit(
+            axis, truth + noise, derivative_order=1, with_uncertainty=True, **fit_kwargs
+        )
         has_interval = fitted.ci_lower is not None and fitted.ci_upper is not None
         return Estimate(
             value=float(fitted.derivative[point]),
             standard_error=(
-                float(fitted.se[point]) if fitted.se is not None else float("nan")
+                float(fitted.standard_error[point])
+                if fitted.standard_error is not None
+                else float("nan")
             ),
             lower=float(fitted.ci_lower[point]) if has_interval else None,
             upper=float(fitted.ci_upper[point]) if has_interval else None,

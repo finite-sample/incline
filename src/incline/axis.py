@@ -12,7 +12,6 @@ ndarray and nothing downstream expected that.
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -44,6 +43,33 @@ class TimeAxis:
     x: npt.NDArray[np.float64]
     delta: float
     unit: str
+
+    def __post_init__(self) -> None:
+        """Validate direct construction as strictly as factory construction."""
+        values = np.asarray(self.x, dtype=np.float64)
+        if values.ndim != 1:
+            raise ValueError(f"Time axis must be 1-D, got shape {values.shape}")
+        if values.size == 0:
+            raise ValueError("Time axis must contain at least one point")
+        if not np.all(np.isfinite(values)):
+            raise ValueError("Time axis contains non-finite values")
+        if values.size > 1:
+            steps = np.diff(values)
+            if np.any(steps <= 0):
+                raise ValueError("Time axis must be strictly increasing")
+            expected_delta = float(np.median(steps))
+            if not np.isclose(self.delta, expected_delta):
+                raise ValueError(
+                    f"delta must equal the median spacing {expected_delta}, "
+                    f"got {self.delta}"
+                )
+        elif self.delta != 1.0:
+            raise ValueError("A one-point axis must use delta=1")
+        if not np.isfinite(self.delta) or self.delta <= 0:
+            raise ValueError("delta must be finite and positive")
+        if not isinstance(self.unit, str) or not self.unit:
+            raise ValueError("unit must be a nonempty string")
+        object.__setattr__(self, "x", values)
 
     @classmethod
     def from_index(cls, index: pd.Index) -> Self:
@@ -110,7 +136,16 @@ class TimeAxis:
 
         Returns:
             A TimeAxis over ``0, 1, ..., n-1``.
+
+        Raises:
+            ValueError: If ``n`` is not a positive integer.
         """
+        if (
+            isinstance(n, (bool, np.bool_))
+            or not isinstance(n, (int, np.integer))
+            or n < 1
+        ):
+            raise ValueError("n must be a positive integer")
         return cls._build(np.arange(n, dtype=np.float64), "index")
 
     @classmethod
@@ -118,6 +153,8 @@ class TimeAxis:
         values = np.asarray(values, dtype=np.float64)
         if values.ndim != 1:
             raise ValueError(f"Time axis must be 1-D, got shape {values.shape}")
+        if values.size == 0:
+            raise ValueError("Time axis must contain at least one point")
         if not np.all(np.isfinite(values)):
             raise ValueError("Time axis contains non-finite values")
         if len(values) > 1:
@@ -166,15 +203,17 @@ class TimeAxis:
         return self.spacing_cv <= REGULARITY_TOLERANCE
 
     def require_regular(self, method: str) -> None:
-        """Warn when a grid-based method is used on irregular sampling.
+        """Reject a grid-based method on irregular sampling.
 
         Args:
-            method: Name of the method, used in the warning message.
+            method: Name of the method, used in the error message.
+
+        Raises:
+            ValueError: If the axis is not regularly spaced.
         """
         if not self.is_regular:
-            warnings.warn(
+            raise ValueError(
                 f"{method} assumes uniform sampling but the spacing varies "
                 f"(cv={self.spacing_cv:.2f}). Prefer spline or local "
-                f"polynomial methods for irregular series.",
-                stacklevel=3,
+                f"polynomial methods for irregular series."
             )

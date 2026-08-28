@@ -98,12 +98,12 @@ def test_uneven_sampling_is_flagged_irregular():
     assert not axis.is_regular
 
 
-def test_grid_methods_warn_on_irregular_sampling():
-    """Savitzky-Golay is wrong off a grid, so it should say so."""
+def test_grid_methods_refuse_irregular_sampling():
+    """A warning is not enough when the returned derivative is known wrong."""
     axis = TimeAxis.from_index(
         pd.DatetimeIndex(["2020-01-01", "2020-01-02", "2020-01-20", "2020-01-21"])
     )
-    with pytest.warns(UserWarning, match="uniform sampling"):
+    with pytest.raises(ValueError, match="uniform sampling"):
         axis.require_regular("Savitzky-Golay")
 
 

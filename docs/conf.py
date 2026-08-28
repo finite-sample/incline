@@ -11,13 +11,7 @@ configure(ns)
 # The pages under examples_executable/ run their code at build time.
 ns["extensions"] += ["jupyter_sphinx"]
 
-# The registered config key is `jupyter_execute_kwargs`. Two other names were
-# set here previously -- `jupyter_execute_notebooks` (a myst-nb option, and
-# myst-nb is not installed) and `jupyter_sphinx_execution_options` (not a
-# registered name at all). Sphinx ignores unknown keys silently, so the build
-# had been running with jupyter-sphinx's defaults: no timeout, and
-# allow_errors=True. Every example that raised was rendered as a traceback in
-# the published docs instead of failing the build.
+# Fail the docs build when an executable example errors or times out.
 jupyter_execute_kwargs = {
     "timeout": 60,
     "allow_errors": False,

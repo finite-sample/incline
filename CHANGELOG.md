@@ -1,5 +1,50 @@
 # Changelog
 
+## 2.0.0 — 2026-08-28
+
+This release makes the public vocabulary consistent and turns validation and
+statistical behavior into tested contracts. It intentionally provides no
+deprecated aliases.
+
+### Breaking API changes
+
+- Standardized public names: `with_uncertainty`, `derivative_order`,
+  `standard_error`, `standard_deviation`, `value_column`, `criterion`, `degree`,
+  `span`, `window_length`, `seasonal_period`, `penalty` and `random_state`.
+- Replaced `InterpolatingSpline` and `PenalizedSpline` with
+  `SmoothingSpline`; replaced `spline_trend` and `pspline_trend` with
+  `smoothing_spline_trend`.
+- Renamed result columns to `derivative_standard_error` and
+  `uncertainty_method`, and added `noise_model` provenance.
+- L1 trend filtering now requires exactly one of `penalty` and
+  `penalty_fraction`; the former defaults and aliases were removed.
+- Removed the unsupported automatic trend selector; `estimate_trend` now
+  defaults to `smoothing_spline` and requires an explicit alternative method.
+
+### Correctness and validation
+
+- Reimplemented L1 trend filtering from the published convex formulation,
+  including divided differences for irregular grids and the exact maximum
+  penalty used by `penalty_fraction`.
+- Made smoothing-spline tuning covariance-aware and routed adaptive fits to
+  bootstrap uncertainty while retaining operator propagation for fixed
+  penalties.
+- Enforced finite, dimensional and domain contracts across axes, smoothers,
+  noise models, results, simulation and seasonal helpers. Unsupported options
+  now fail instead of being ignored.
+- Preserved the covariance structure in uncertainty provenance, including
+  bias-corrected fits.
+- Removed placeholder smoothing scales. Adaptive configurations report no
+  fixed scale, and SiZer rejects estimators without a scale knob.
+- Refused simultaneous bands for bootstrap and native-posterior uncertainty,
+  and refused state-space fits on irregular sampling grids.
+- Exposed `pilot_scale` through the functional API and aligned ranking's
+  zero-error significance and uncertainty provenance with result objects.
+- Added reference comparisons, reversal tests and Monte Carlo gates for bias,
+  standard-error calibration, coverage, size and power.
+- Replaced the binary notebook source with executable MyST Markdown and made
+  the Sphinx landing page include the README directly.
+
 ## 1.0.0 — 2026-08-19
 
 A rewrite. Every estimator now reports a standard error, and how it gets one is

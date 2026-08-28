@@ -1,6 +1,6 @@
 [project]
 name = "incline"
-version = "1.0.0"
+version = "2.0.0"
 description = "Estimate Trend at a Particular Point in a Noisy Time Series"
 readme = "README.md"
 license = "MIT"
@@ -70,8 +70,6 @@ docs = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
-# The example notebook is a demo, not library code.
-extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 external = ["DOC"]

@@ -86,20 +86,24 @@ IN_SPAN = [
         id="local_poly_d1_linear",
     ),
     pytest.param(
-        sm.SavitzkyGolay(window_length=21, polyorder=3),
+        sm.SavitzkyGolay(window_length=21, degree=3),
         [0.7, -0.4, 0.015, 2e-4],
         id="sgolay_p3_cubic",
     ),
     pytest.param(
-        sm.SavitzkyGolay(window_length=21, polyorder=2),
+        sm.SavitzkyGolay(window_length=21, degree=2),
         [0.7, -0.4, 0.015],
         id="sgolay_p2_quadratic",
     ),
     pytest.param(sm.NaiveDifference(), [0.7, -0.4], id="naive_linear"),
     pytest.param(
-        sm.Loess(frac=0.3, degree=1, robust=False), [0.7, -0.4], id="loess_d1_linear"
+        sm.Loess(span=0.3, robust=False), [0.7, -0.4], id="loess_local_linear"
     ),
-    pytest.param(sm.PenalizedSpline(lam=1e3), [0.7, -0.4], id="pspline_linear"),
+    pytest.param(
+        sm.SmoothingSpline(penalty=1e3),
+        [0.7, -0.4],
+        id="smoothing_spline_linear",
+    ),
 ]
 
 
@@ -189,7 +193,7 @@ def test_a_deliberately_wrong_standard_error_fails_the_coverage_gate(reps):
     """
     values, derivative = polynomial([0.7, -0.4])
     result = monte_carlo(
-        sm.SavitzkyGolay(window_length=21, polyorder=2),
+        sm.SavitzkyGolay(window_length=21, degree=2),
         AXIS,
         values,
         derivative,
@@ -228,7 +232,7 @@ def test_size_under_no_trend(smoother, coefficients, reps, capsys):
 @pytest.mark.parametrize("reps", TIERS)
 def test_power_rises_with_the_signal(reps, capsys):
     """A stronger trend must be detected more often, and a strong one always."""
-    smoother = sm.SavitzkyGolay(window_length=21, polyorder=2)
+    smoother = sm.SavitzkyGolay(window_length=21, degree=2)
     rates = []
     for slope in (0.0, 0.02, 0.05, 0.20):
         values, derivative = polynomial([0.0, slope])
@@ -258,7 +262,7 @@ def test_assuming_independence_under_autocorrelation_undercovers(reps, capsys):
     well under half the time.
     """
     values, derivative = polynomial([0.7, -0.4])
-    smoother = sm.SavitzkyGolay(window_length=21, polyorder=2)
+    smoother = sm.SavitzkyGolay(window_length=21, degree=2)
     result = monte_carlo(
         smoother,
         AXIS,
@@ -285,7 +289,7 @@ def test_modelling_the_autocorrelation_repairs_most_of_it(reps, capsys):
     much better than 0.42, and honest about not being perfect.
     """
     values, derivative = polynomial([0.7, -0.4])
-    smoother = sm.SavitzkyGolay(window_length=21, polyorder=2)
+    smoother = sm.SavitzkyGolay(window_length=21, degree=2)
     result = monte_carlo(
         smoother,
         AXIS,
@@ -322,10 +326,10 @@ def test_gaussian_process_standard_error_is_not_absurd():
         {"value": 0.5 * x + np.sin(x) + rng.normal(0, 0.3, 120), "t": x}
     )
 
-    result = api.gp_trend(frame, time_column="t", se=True)
+    result = api.gp_trend(frame, time_column="t", with_uncertainty=True)
     truth = 0.5 + np.cos(x)
 
-    assert result["derivative_se"].median() < 1.0
+    assert result["derivative_standard_error"].median() < 1.0
     assert np.corrcoef(result["derivative_value"], truth)[0, 1] > 0.9
     covered = (
         (result["derivative_ci_lower"] <= truth)

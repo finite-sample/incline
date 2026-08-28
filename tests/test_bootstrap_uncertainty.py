@@ -2,7 +2,8 @@
 
 Every Monte Carlo test in this suite ran on the *operator* path: `IN_SPAN` in
 test_econometrics.py lists only linear smoothers. The two smoothers that reach
-their uncertainty by resampling -- `InterpolatingSpline` and `L1TrendFilter` --
+their uncertainty by resampling -- `SmoothingSpline` with GCV and
+`L1TrendFilter` --
 had no coverage test at all. The 0.76 -> 0.975 figures in `incline.uncertainty`'s
 module docstring are recorded measurements, not assertions: nothing in the suite
 would notice if they regressed.
@@ -55,15 +56,18 @@ from incline.smoothers import build
 from tests._statistics import (
     DEEP_REPS,
     FAST_REPS,
+    GATE_SIGMAS,
+    MonteCarloResult,
+    assert_se_calibrated,
     binomial_band,
 )
 
 N = 120
 SIGMA = 0.5
-# Enough resamples for the bootstrap's own noise to sit well under the sampling
-# spread being measured, and few enough that the file runs in about a minute:
-# 80 costs 33 ms a fit for the spline and 114 ms for the L1 filter.
-N_BOOTSTRAP = 80
+# Adaptive spline selection needs more draws to stabilize the lower tail of its
+# pointwise calibration ratios. The L1 filter is stable with fewer draws and is
+# substantially more expensive to refit.
+BOOTSTRAP_REPLICATES = {"smoothing_spline": 120, "l1_filter": 80}
 # Away from both boundaries, where every smoother is a different estimator.
 INTERIOR = np.arange(25, 96)
 POINT = 60
@@ -76,7 +80,7 @@ _T = np.arange(N, dtype=float)
 SMOOTH = 0.02 * (_T - 60) ** 2 / 100 + 0.05 * _T
 SMOOTH_DERIVATIVE = 0.04 * (_T - 60) / 100 + 0.05
 
-BOOTSTRAP_SMOOTHERS = ["spline", "l1_filter"]
+BOOTSTRAP_SMOOTHERS = ["smoothing_spline", "l1_filter"]
 
 TIERS = [
     pytest.param(FAST_REPS, id="fast"),
@@ -104,12 +108,15 @@ def _study(name: str, reps: int, seed0: int):
 
     for i in range(reps):
         rng = np.random.default_rng(seed0 + i)
-        fitted = build(name).fit(
+        smoother = (
+            build(name, penalty_fraction=0.2) if name == "l1_filter" else build(name)
+        )
+        fitted = smoother.fit(
             AXIS,
             SMOOTH + NoiseGenerator.white(N, SIGMA, rng),
-            order=1,
-            se=True,
-            n_bootstrap=N_BOOTSTRAP,
+            derivative_order=1,
+            with_uncertainty=True,
+            n_bootstrap=BOOTSTRAP_REPLICATES[name],
             # Seed the resampling too, not just the noise draw. Without this the
             # bootstrap runs off an unseeded generator and the whole study is
             # irreproducible: the same input gave se[60] of 0.4411 and then
@@ -118,7 +125,7 @@ def _study(name: str, reps: int, seed0: int):
             random_state=seed0 + i,
         )
         estimates[i] = fitted.derivative
-        errors[i] = fitted.se
+        errors[i] = fitted.standard_error
         lower[i] = fitted.ci_lower
         upper[i] = fitted.ci_upper
 
@@ -316,49 +323,65 @@ def test_average_coverage_across_the_function(name, reps, studies):
 
 
 @pytest.mark.parametrize("reps", TIERS)
-def test_the_l1_filter_undercovers_at_a_slope_change(reps):
-    """A known limitation, pinned so it cannot get quietly worse.
+def test_l1_regularization_bias_near_a_slope_change(reps):
+    """Separate regularization bias from bootstrap SE calibration.
 
     On a piecewise-linear truth whose slope jumps from 0.02 to 0.20, the L1
-    filter's default penalty smooths the corner. The derivative at the corner is
-    biased by about -0.09, roughly 14 Monte Carlo standard errors, and coverage
-    of the true slope falls to 0.67.
+    filter's explicit 0.2 penalty fraction shrinks both slopes toward one
+    another. The derivative does not exist at the kink itself, so this test uses
+    fixed points ten observations to its left and right, where the truth is
+    unambiguously 0.02 and 0.20.
 
-    The interval is not at fault, and this test exists partly to say so: at the
-    same point the standard error is about 0.94 of the estimator's real spread
-    and the interval covers its own expectation essentially always. The failure
-    is bias, which no interval computed from the data alone can know about.
-
-    So the gate is a floor at the measured level, not at nominal. Asserting 0.95
-    here would be asserting something untrue about the estimator. Compare
-    `InterpolatingSpline`, which places knots adaptively and reaches 0.96 at the
-    same corner -- the difference between the two is the point.
+    The bootstrap standard error should still match the estimator's sampling
+    spread. Coverage of the scientific truth should not be advertised as
+    nominal, however: residual resampling around the fitted trend cannot recover
+    regularization bias. A separate smooth-truth test supplies the positive
+    coverage gate.
 
     Args:
         reps: Replicates for this tier.
     """
     kink = 60
     truth = np.where(kink > _T, 0.02 * _T, 0.02 * kink + 0.20 * (_T - kink))
-    target = 0.20
-
-    covered = 0
+    points = np.array([50, 70])
+    targets = np.array([0.02, 0.20])
+    estimates = np.empty((reps, len(points)))
+    standard_errors = np.empty_like(estimates)
+    lowers = np.empty_like(estimates)
+    uppers = np.empty_like(estimates)
     for i in range(reps):
         rng = np.random.default_rng(8000 + i)
-        fitted = build("l1_filter").fit(
+        fitted = build("l1_filter", penalty_fraction=0.2).fit(
             AXIS,
             truth + NoiseGenerator.white(N, SIGMA, rng),
-            order=1,
-            se=True,
-            n_bootstrap=N_BOOTSTRAP,
+            derivative_order=1,
+            with_uncertainty=True,
+            n_bootstrap=BOOTSTRAP_REPLICATES["l1_filter"],
             random_state=8000 + i,
         )
-        covered += (
-            float(fitted.ci_lower[kink]) <= target <= float(fitted.ci_upper[kink])
-        )
+        estimates[i] = fitted.derivative[points]
+        standard_errors[i] = fitted.standard_error[points]
+        lowers[i] = fitted.ci_lower[points]
+        uppers[i] = fitted.ci_upper[points]
 
-    rate = covered / reps
-    assert 0.5 <= rate <= 0.85, (
-        f"coverage at the slope change is {rate:.3f}; it was 0.67 when this was "
-        "written. Above the range means the penalty or the interval changed for "
-        "the better and the note above needs rewriting; below means it got worse."
-    )
+    for column, (point, target) in enumerate(zip(points, targets, strict=True)):
+        study = MonteCarloResult(
+            estimates=estimates[:, column],
+            standard_errors=standard_errors[:, column],
+            covered=((lowers[:, column] <= target) & (target <= uppers[:, column])),
+            rejected=None,
+            truth=float(target),
+        )
+        label = f"L1 filter at x={point} around a slope change"
+        assert abs(study.bias_t) >= GATE_SIGMAS, (
+            f"{label}: the documented regularization bias is no longer resolved "
+            f"({study.bias:+.6f}, {study.bias_t:+.2f} Monte Carlo SEs); reassess "
+            "the limitation rather than preserving this expectation"
+        )
+        assert_se_calibrated(study, label)
+        _, poor_coverage_ceiling = binomial_band(0.05, reps)
+        assert study.coverage <= poor_coverage_ceiling, (
+            f"{label}: coverage improved to {study.coverage:.3f}, above the "
+            f"{poor_coverage_ceiling:.3f} ceiling for a 0.05 claim; reassess the "
+            "documented limitation"
+        )

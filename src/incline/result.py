@@ -1,15 +1,8 @@
-"""The result of a trend estimation.
+"""Structured trend estimates and their pandas representation.
 
-Previously this was a naming convention: estimators appended columns named
-``derivative_value``, ``smoothed_value`` and so on to a copy of the input frame,
-and every consumer agreed to look for them. Nothing enforced the agreement, so
-``naive_trend`` never produced ``smoothed_value`` at all, ``trending`` emitted a
-different schema when it matched nothing, and -- most costly -- the ranking layer
-could not use standard errors because there was no type in which to carry them.
-
-:class:`TrendEstimate` is that type. ``.to_frame()`` still produces the pandas
-view, because that is what users want to work with; the difference is that the
-view is derived from a structure rather than being the structure.
+:class:`TrendEstimate` keeps point estimates, uncertainty, provenance, and the
+original index together. :meth:`TrendEstimate.to_frame` derives the stable
+tabular schema used by the convenience API.
 """
 
 from __future__ import annotations
@@ -24,16 +17,17 @@ import pandas as pd
 if TYPE_CHECKING:
     from .axis import TimeAxis
 
-# Columns every estimate produces, in the order they appear in the frame.
+# Columns every estimate produces, in the derivative_order they appear in the frame.
 CORE_COLUMNS = (
     "smoothed_value",
     "derivative_value",
     "derivative_method",
     "derivative_order",
-    "derivative_se",
+    "derivative_standard_error",
     "derivative_ci_lower",
     "derivative_ci_upper",
-    "se_method",
+    "uncertainty_method",
+    "noise_model",
     "significant_trend",
 )
 
@@ -48,10 +42,10 @@ class Provenance:
 
     Attributes:
         method: Smoother name, e.g. ``'sgolay'``.
-        se_method: How uncertainty was obtained: ``'operator'`` (exact, from
-            the smoother's linear operator), ``'bootstrap'``, ``'gp_analytic'``,
-            ``'kalman'``, or None when no standard error was computed.
-        noise: Description of the noise model, e.g. ``'iid(sigma=0.31)'``.
+        uncertainty_method: How uncertainty was obtained: ``'operator'``,
+            ``'bootstrap'``, ``'native'``, or None when no standard error
+            was computed.
+        noise: Description of the noise model.
         bias_corrected: Whether a pilot-fit bias correction was applied.
         simultaneous: Whether the interval is a simultaneous band rather than
             a pointwise interval.
@@ -59,7 +53,7 @@ class Provenance:
     """
 
     method: str
-    se_method: str | None = None
+    uncertainty_method: str | None = None
     noise: str | None = None
     bias_corrected: bool = False
     simultaneous: bool = False
@@ -74,9 +68,9 @@ class TrendEstimate:
         axis: The time axis the estimate lives on.
         values: The smoothed series.
         derivative: The derivative of the smooth, per unit of ``axis.x``.
-        order: Which derivative ``derivative`` holds.
+        derivative_order: Which derivative ``derivative`` holds.
         provenance: How the estimate was produced.
-        se: Standard error of ``derivative``, or None when unavailable.
+        standard_error: Standard error of ``derivative``, or None when unavailable.
         ci_lower: Lower interval bound, or None.
         ci_upper: Upper interval bound, or None.
         confidence_level: Confidence level of the interval.
@@ -86,28 +80,74 @@ class TrendEstimate:
     axis: TimeAxis
     values: npt.NDArray[np.float64]
     derivative: npt.NDArray[np.float64]
-    order: int
+    derivative_order: int
     provenance: Provenance
-    se: npt.NDArray[np.float64] | None = None
+    standard_error: npt.NDArray[np.float64] | None = None
     ci_lower: npt.NDArray[np.float64] | None = None
     ci_upper: npt.NDArray[np.float64] | None = None
     confidence_level: float = 0.95
     index: pd.Index | None = None
 
     def __post_init__(self) -> None:
-        """Check that every array matches the axis length."""
+        """Validate result shapes, intervals, and uncertainty metadata."""
         n = self.axis.n
-        for name in ("values", "derivative", "se", "ci_lower", "ci_upper"):
+        for name in (
+            "values",
+            "derivative",
+            "standard_error",
+            "ci_lower",
+            "ci_upper",
+        ):
             arr = getattr(self, name)
-            if arr is not None and len(arr) != n:
+            if arr is None:
+                continue
+            array = np.asarray(arr, dtype=np.float64)
+            if array.ndim != 1:
+                raise ValueError(f"{name} must be one-dimensional")
+            if len(array) != n:
                 raise ValueError(
-                    f"{name} has length {len(arr)} but the axis has {n} points"
+                    f"{name} has length {len(array)} but the axis has {n} points"
                 )
+            object.__setattr__(self, name, array)
+        if (
+            isinstance(self.derivative_order, (bool, np.bool_))
+            or not isinstance(self.derivative_order, (int, np.integer))
+            or self.derivative_order < 0
+        ):
+            raise ValueError("derivative_order must be a nonnegative integer")
+        if self.standard_error is not None and (
+            np.any(np.isinf(self.standard_error))
+            or np.any(self.standard_error[np.isfinite(self.standard_error)] < 0)
+        ):
+            raise ValueError("standard_error must be nonnegative and not infinite")
+        if (self.ci_lower is None) != (self.ci_upper is None):
+            raise ValueError("ci_lower and ci_upper must be supplied together")
+        if (
+            self.ci_lower is not None
+            and self.ci_upper is not None
+            and np.any(self.ci_lower > self.ci_upper)
+        ):
+            raise ValueError("ci_lower cannot exceed ci_upper")
+        if (
+            isinstance(self.confidence_level, (bool, np.bool_))
+            or not isinstance(
+                self.confidence_level, (int, float, np.integer, np.floating)
+            )
+            or not np.isfinite(self.confidence_level)
+            or not 0.0 < self.confidence_level < 1.0
+        ):
+            raise ValueError(
+                "confidence_level must be finite and strictly between 0 and 1"
+            )
+        if self.index is not None and len(self.index) != n:
+            raise ValueError(
+                f"index has length {len(self.index)} but the axis has {n} points"
+            )
 
     @property
     def has_uncertainty(self) -> bool:
         """Whether this estimate carries a standard error."""
-        return self.se is not None
+        return self.standard_error is not None
 
     @property
     def significant(self) -> npt.NDArray[np.bool_]:
@@ -126,8 +166,8 @@ class TrendEstimate:
         if self.ci_lower is None or self.ci_upper is None:
             return np.zeros(self.axis.n, dtype=bool)
         usable = np.isfinite(self.ci_lower) & np.isfinite(self.ci_upper)
-        if self.se is not None:
-            usable &= np.isfinite(self.se) & (self.se > 0)
+        if self.standard_error is not None:
+            usable &= np.isfinite(self.standard_error) & (self.standard_error > 0)
         return np.asarray(
             usable & ((self.ci_lower > 0) | (self.ci_upper < 0)), dtype=bool
         )
@@ -148,15 +188,18 @@ class TrendEstimate:
             "smoothed_value": self.values,
             "derivative_value": self.derivative,
             "derivative_method": self.provenance.method,
-            "derivative_order": self.order,
-            "derivative_se": self.se if self.se is not None else nan,
+            "derivative_order": self.derivative_order,
+            "derivative_standard_error": self.standard_error
+            if self.standard_error is not None
+            else nan,
             "derivative_ci_lower": (
                 self.ci_lower if self.ci_lower is not None else nan
             ),
             "derivative_ci_upper": (
                 self.ci_upper if self.ci_upper is not None else nan
             ),
-            "se_method": self.provenance.se_method,
+            "uncertainty_method": self.provenance.uncertainty_method,
+            "noise_model": self.provenance.noise,
             "significant_trend": self.significant,
         }
         columns.update(self.provenance.params)
@@ -174,8 +217,8 @@ class TrendEstimate:
 
     def with_uncertainty(
         self,
-        se: npt.NDArray[np.float64] | None,
-        se_method: str | None,
+        standard_error: npt.NDArray[np.float64] | None,
+        uncertainty_method: str | None,
         ci_lower: npt.NDArray[np.float64] | None = None,
         ci_upper: npt.NDArray[np.float64] | None = None,
         confidence_level: float = 0.95,
@@ -185,12 +228,12 @@ class TrendEstimate:
         """Return a copy carrying uncertainty.
 
         When ``ci_lower``/``ci_upper`` are omitted a normal-theory interval is
-        built from ``se``. Bootstrap percentile intervals are not symmetric
+        built from ``standard_error``. Bootstrap percentile intervals are not symmetric
         about the point estimate, so those are passed explicitly.
 
         Args:
-            se: Standard errors, or None.
-            se_method: Label recorded in provenance.
+            standard_error: Standard errors, or None.
+            uncertainty_method: Label recorded in provenance.
             ci_lower: Explicit lower bounds.
             ci_upper: Explicit upper bounds.
             confidence_level: Confidence level for a normal-theory interval.
@@ -199,25 +242,30 @@ class TrendEstimate:
 
         Returns:
             A new TrendEstimate.
+
+        Raises:
+            ValueError: If exactly one explicit confidence bound is supplied.
         """
         from dataclasses import replace
 
         from scipy.stats import norm
 
-        if se is not None and (ci_lower is None or ci_upper is None):
+        if (ci_lower is None) != (ci_upper is None):
+            raise ValueError("ci_lower and ci_upper must be supplied together")
+        if standard_error is not None and ci_lower is None:
             z = float(norm.ppf(1 - (1 - confidence_level) / 2))
-            ci_lower = self.derivative - z * se
-            ci_upper = self.derivative + z * se
+            ci_lower = self.derivative - z * standard_error
+            ci_upper = self.derivative + z * standard_error
 
         return replace(
             self,
-            se=se,
+            standard_error=standard_error,
             ci_lower=ci_lower,
             ci_upper=ci_upper,
             confidence_level=confidence_level,
             provenance=replace(
                 self.provenance,
-                se_method=se_method,
+                uncertainty_method=uncertainty_method,
                 noise=noise,
                 simultaneous=simultaneous,
             ),

@@ -29,7 +29,7 @@ AXIS = TimeAxis.positional(N)
 TRUTH = 0.7 - 0.4 * AXIS.x  # linear, so in span: bias is exactly zero
 TRUE_SLOPE = -0.4
 SIGMA = 0.5
-SMOOTHER = sm.SavitzkyGolay(window_length=21, polyorder=2)
+SMOOTHER = sm.SavitzkyGolay(window_length=21, degree=2)
 
 TIERS = [
     pytest.param(FAST_REPS, id="fast"),
@@ -55,10 +55,16 @@ def coverage_at(points, reps, draw, noise="iid", seed=4):
     hits = dict.fromkeys(points, 0)
 
     for _ in range(reps):
-        fitted = SMOOTHER.fit(AXIS, TRUTH + draw(rng), order=1, se=True, noise=noise)
+        fitted = SMOOTHER.fit(
+            AXIS,
+            TRUTH + draw(rng),
+            derivative_order=1,
+            with_uncertainty=True,
+            noise=noise,
+        )
         for p in points:
             estimates[p].append(fitted.derivative[p])
-            reported[p].append(fitted.se[p])
+            reported[p].append(fitted.standard_error[p])
             hits[p] += bool(fitted.ci_lower[p] <= TRUE_SLOPE <= fitted.ci_upper[p])
 
     return {
@@ -93,9 +99,9 @@ def test_heavy_tails_do_not_bias_the_estimate(reps):
     rng = np.random.default_rng(5)
     estimates = np.array(
         [
-            SMOOTHER.fit(AXIS, TRUTH + SHAPES["student_t3"](rng), order=1).derivative[
-                80
-            ]
+            SMOOTHER.fit(
+                AXIS, TRUTH + SHAPES["student_t3"](rng), derivative_order=1
+            ).derivative[80]
             for _ in range(reps)
         ]
     )
@@ -156,7 +162,7 @@ def test_modelling_the_varying_scale_repairs_it(reps, capsys):
 def test_local_sigma_tracks_a_changing_scale():
     """The local estimator must follow the ramp, not average it away."""
     rng = np.random.default_rng(6)
-    estimated = local_sigma(TRUTH + rng.normal(0, 1, N) * RAMP, window=31)
+    estimated = local_sigma(TRUTH + rng.normal(0, 1, N) * RAMP, window_length=31)
     assert estimated.shape == (N,)
     # Compare ends rather than pointwise: the estimator is deliberately smooth.
     assert estimated[-30:].mean() > 2.5 * estimated[:30].mean()
@@ -175,7 +181,7 @@ def test_local_sigma_matches_the_global_one_when_variance_is_constant():
 def test_supplied_scale_must_match_the_series():
     """A per-point sigma of the wrong length is a caller error worth naming."""
     with pytest.raises(ValueError, match="one value per observation"):
-        Heteroskedastic(sigma=np.ones(5)).estimate(np.ones(N), AXIS)
+        Heteroskedastic(standard_deviation=np.ones(5)).estimate(np.ones(N), AXIS)
 
 
 def test_heteroskedastic_is_reachable_by_name():

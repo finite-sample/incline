@@ -26,24 +26,28 @@ from incline.process import GaussianProcess
 warnings.filterwarnings("ignore")
 
 N = 130
+RANDOM_STATE = 11
 SCALES = [0.06, 0.10, 0.16, 0.25, 0.40]
 OUTPUT = Path(__file__).parent / "explorer_data.json"
 
 METHODS = {
-    "sgolay": ("Savitzky-Golay", sm.SavitzkyGolay(polyorder=3), True),
+    "sgolay": ("Savitzky-Golay", sm.SavitzkyGolay(degree=3), True),
     "local_poly": ("Local polynomial", sm.LocalPolynomial(degree=2), True),
-    "loess": ("LOESS", sm.Loess(degree=1, robust=False), True),
-    "pspline": ("Penalized spline", sm.PenalizedSpline(lam=1.0), True),
-    "spline": ("Spline (knot-selecting)", sm.InterpolatingSpline(), False),
+    "loess": ("LOESS", sm.Loess(robust=False), True),
+    "smoothing_spline": (
+        "Smoothing spline",
+        sm.SmoothingSpline(penalty=1.0),
+        True,
+    ),
     "gp": ("Gaussian process", GaussianProcess(n_restarts=0), False),
 }
 
 
-def _ar1_noise(rng: np.random.Generator, n: int, phi: float, sigma: float):
+def _ar1_noise(rng: np.random.Generator, n: int, phi: float, standard_deviation: float):
     """Draw AR(1) noise with the given marginal standard deviation."""
-    innovation = sigma * np.sqrt(1 - phi**2)
+    innovation = standard_deviation * np.sqrt(1 - phi**2)
     noise = np.empty(n)
-    noise[0] = rng.normal(0, sigma)
+    noise[0] = rng.normal(0, standard_deviation)
     for i in range(1, n):
         noise[i] = phi * noise[i - 1] + rng.normal(0, innovation)
     return noise
@@ -52,7 +56,7 @@ def _ar1_noise(rng: np.random.Generator, n: int, phi: float, sigma: float):
 def build_series() -> dict[str, dict]:
     """The four example series, each with its true derivative where known."""
     x = np.arange(N, dtype=float)
-    rng = np.random.default_rng(11)
+    rng = np.random.default_rng(RANDOM_STATE)
     series: dict[str, dict] = {}
 
     trend = 0.04 * x + 2.5 * np.sin(x / 18)
@@ -109,28 +113,37 @@ def _rounded(values, n):
 def panel(smoother, axis, y, supports_bias):
     """Fit one configuration under both noise models."""
     out: dict[str, object] = {}
-    base = smoother.fit(axis, y, order=1, se=True, noise=IID(), n_bootstrap=60)
+    fit_options = {
+        "derivative_order": 1,
+        "with_uncertainty": True,
+        "n_bootstrap": 60,
+    }
+    if smoother.has_native_posterior:
+        base = smoother.fit(axis, y, **fit_options)
+        correlated = base
+    else:
+        base = smoother.fit(axis, y, noise=IID(), **fit_options)
+        correlated = smoother.fit(axis, y, noise=AR1(), **fit_options)
     out["smoothed"] = _rounded(base.values, axis.n)
     out["derivative"] = _rounded(base.derivative, axis.n)
-    out["se_iid"] = _rounded(base.se, axis.n)
-    out["se_method"] = base.provenance.se_method
+    out["standard_error_iid"] = _rounded(base.standard_error, axis.n)
+    out["uncertainty_method"] = base.provenance.uncertainty_method
 
-    correlated = smoother.fit(axis, y, order=1, se=True, noise=AR1(), n_bootstrap=60)
-    out["se_ar1"] = _rounded(correlated.se, axis.n)
+    out["standard_error_ar1"] = _rounded(correlated.standard_error, axis.n)
 
     if smoother.is_linear:
         simultaneous = smoother.fit(
             axis,
             y,
-            order=1,
-            se=True,
+            derivative_order=1,
+            with_uncertainty=True,
             noise=IID(),
             simultaneous=True,
-            random_state=0,
+            random_state=RANDOM_STATE,
         )
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio = (simultaneous.ci_upper - simultaneous.derivative) / np.where(
-                simultaneous.se > 0, simultaneous.se, np.nan
+                simultaneous.standard_error > 0, simultaneous.standard_error, np.nan
             )
         out["simultaneous_multiplier"] = float(np.nanmedian(ratio))
     else:
@@ -138,13 +151,20 @@ def panel(smoother, axis, y, supports_bias):
 
     if supports_bias and smoother.is_linear:
         corrected = smoother.fit(
-            axis, y, order=1, se=True, noise=IID(), bias_correct=True
+            axis,
+            y,
+            derivative_order=1,
+            with_uncertainty=True,
+            noise=IID(),
+            bias_correct=True,
         )
-        out["bc_derivative"] = _rounded(corrected.derivative, axis.n)
-        out["bc_se"] = _rounded(corrected.se, axis.n)
+        out["bias_corrected_derivative"] = _rounded(corrected.derivative, axis.n)
+        out["bias_corrected_standard_error"] = _rounded(
+            corrected.standard_error, axis.n
+        )
     else:
-        out["bc_derivative"] = None
-        out["bc_se"] = None
+        out["bias_corrected_derivative"] = None
+        out["bias_corrected_standard_error"] = None
     return out
 
 
@@ -157,7 +177,14 @@ def main() -> None:
         "x": axis.x.tolist(),
         "scales": SCALES,
         "series": dict(series.items()),
-        "methods": {k: {"label": v[0], "linear": None} for k, v in METHODS.items()},
+        "methods": {
+            key: {
+                "label": value[0],
+                "linear": None,
+                "supports_noise_model": not value[1].has_native_posterior,
+            }
+            for key, value in METHODS.items()
+        },
         "panels": {},
     }
 
@@ -172,7 +199,7 @@ def main() -> None:
             print(f"  {series_key:8s} {method_key}")  # noqa: T201
 
     blob = json.dumps(payload, separators=(",", ":"))
-    OUTPUT.write_text(blob)
+    OUTPUT.write_text(f"{blob}\n")
 
     # Inline the data so the page is genuinely self-contained: no fetch, so it
     # works from the filesystem and under a strict content security policy.

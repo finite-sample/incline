@@ -17,15 +17,13 @@ DataFrame carrying the columns described in [Uncertainty](uncertainty.md).
 
    naive_trend
    sgolay_trend
-   spline_trend
-   pspline_trend
+   smoothing_spline_trend
    loess_trend
    local_polynomial_trend
    l1_trend_filter
    gp_trend
    kalman_trend
    estimate_trend
-   select_trend_method
    estimate
 ```
 
@@ -47,8 +45,7 @@ smoothers get an exact operator variance, the rest are bootstrapped.
    NaiveDifference
    LocalPolynomial
    Loess
-   PenalizedSpline
-   InterpolatingSpline
+   SmoothingSpline
    L1TrendFilter
    GaussianProcess
    StateSpace

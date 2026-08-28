@@ -30,7 +30,7 @@ from scipy.linalg import cho_solve
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel
 
-from .smoothers import Evaluation, Smoother, register
+from .smoothers import Evaluation, Smoother, _validate_scale, register
 
 if TYPE_CHECKING:
     from typing import Self
@@ -104,14 +104,14 @@ def _decompose(kernel: Any, family: str) -> _KernelParts:
 
 
 def _cross_derivative(
-    parts: _KernelParts, r: npt.NDArray[np.float64], order: int
+    parts: _KernelParts, r: npt.NDArray[np.float64], derivative_order: int
 ) -> npt.NDArray[np.float64]:
-    """``d^order/dx^order`` of the covariance, as a function of ``r = x - x'``.
+    """Differentiate the covariance with respect to x.
 
     Args:
         parts: The kernel's parameters.
         r: Signed separations.
-        order: Derivative order.
+        derivative_order: Derivative derivative_order.
 
     Returns:
         The derivative at each separation.
@@ -123,7 +123,7 @@ def _cross_derivative(
     match parts.family:
         case "rbf":
             base = amplitude * np.exp(-0.5 * (r / length) ** 2)
-            match order:
+            match derivative_order:
                 case 0:
                     return base
                 case 1:
@@ -131,11 +131,13 @@ def _cross_derivative(
                 case 2:
                     return base * (r**2 / length**4 - 1 / length**2)
                 case _:
-                    raise ValueError(f"rbf derivative order {order} not implemented")
+                    raise ValueError(
+                        f"rbf derivative order {derivative_order} not implemented"
+                    )
         case "matern32":
             a = np.sqrt(3.0) / length
             decay = np.exp(-a * np.abs(r))
-            match order:
+            match derivative_order:
                 case 0:
                     return amplitude * (1 + a * np.abs(r)) * decay
                 case 1:
@@ -145,7 +147,7 @@ def _cross_derivative(
         case "matern52":
             a = np.sqrt(5.0) / length
             decay = np.exp(-a * np.abs(r))
-            match order:
+            match derivative_order:
                 case 0:
                     return amplitude * (1 + a * np.abs(r) + a**2 * r**2 / 3) * decay
                 case 1:
@@ -163,15 +165,15 @@ def _cross_derivative(
             raise ValueError(f"Unknown kernel family {parts.family!r}")
 
 
-def _prior_derivative_variance(parts: _KernelParts, order: int) -> float:
-    """``d^2order/dx^order dx'^order`` of the covariance at zero separation.
+def _prior_derivative_variance(parts: _KernelParts, derivative_order: int) -> float:
+    """Prior variance of the requested derivative at zero separation.
 
     This is the prior variance of the derivative -- the value the posterior
     variance decays toward away from the data.
 
     Args:
         parts: The kernel's parameters.
-        order: Derivative order.
+        derivative_order: Derivative derivative_order.
 
     Returns:
         The prior variance.
@@ -180,7 +182,7 @@ def _prior_derivative_variance(parts: _KernelParts, order: int) -> float:
         ValueError: If the derivative does not exist for this kernel.
     """
     amplitude, length = parts.amplitude, parts.length_scale
-    match (parts.family, order):
+    match (parts.family, derivative_order):
         case ("rbf", 0):
             return amplitude
         case ("rbf", 1):
@@ -200,7 +202,7 @@ def _prior_derivative_variance(parts: _KernelParts, order: int) -> float:
             return 25 * amplitude / length**4
         case _:
             raise ValueError(
-                f"{parts.family} is not {order}-times mean-square "
+                f"{parts.family} is not {derivative_order}-times mean-square "
                 f"differentiable, so that derivative has no variance"
             )
 
@@ -266,11 +268,48 @@ class GaussianProcess(Smoother):
     optimize: bool = True
     standardize: bool = True
 
+    def __post_init__(self) -> None:
+        """Validate the probability-model configuration."""
+        if self.kernel not in MATERN_ORDERS:
+            raise ValueError(
+                f"Unknown kernel {self.kernel!r}; use 'rbf', 'matern32' or 'matern52'"
+            )
+        for name, value in (
+            ("amplitude", self.amplitude),
+            ("length_scale", self.length_scale),
+        ):
+            if value is not None and (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, (int, float, np.integer, np.floating))
+                or not np.isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError(f"{name} must be finite and positive")
+        if (
+            isinstance(self.noise_level, (bool, np.bool_))
+            or not isinstance(self.noise_level, (int, float, np.integer, np.floating))
+            or not np.isfinite(self.noise_level)
+            or self.noise_level < 0
+        ):
+            raise ValueError("noise_level must be finite and nonnegative")
+        if (
+            isinstance(self.n_restarts, (bool, np.bool_))
+            or not isinstance(self.n_restarts, (int, np.integer))
+            or self.n_restarts < 0
+        ):
+            raise ValueError("n_restarts must be a nonnegative integer")
+        for name, value in (
+            ("optimize", self.optimize),
+            ("standardize", self.standardize),
+        ):
+            if not isinstance(value, (bool, np.bool_)):
+                raise ValueError(f"{name} must be boolean")
+
     def _fitted(self, axis: TimeAxis, y: npt.NDArray[np.float64]) -> Any:
         """Fit the GP, reusing the fit when the same data comes back.
 
         Returns the fitted model together with the mean removed from the
-        response, which the posterior has to add back for order zero.
+        response, which the posterior has to add back for derivative_order zero.
         """
         key = (self, axis.key(), y.tobytes())
         cached = _FIT_CACHE.get(key)
@@ -317,9 +356,9 @@ class GaussianProcess(Smoother):
         return _remember(key, model)
 
     def _posterior(
-        self, axis: TimeAxis, y: npt.NDArray[np.float64], order: int
+        self, axis: TimeAxis, y: npt.NDArray[np.float64], derivative_order: int
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-        """Posterior mean and standard deviation of the ``order``-th derivative.
+        """Posterior mean and standard deviation of the requested derivative.
 
         The derivative of a Gaussian process is a Gaussian process, with
         covariance given by differentiating the kernel. Both the mean and the
@@ -328,49 +367,49 @@ class GaussianProcess(Smoother):
         model = self._fitted(axis, y)
         parts = _decompose(model.kernel_, self.kernel)
 
-        if order > MATERN_ORDERS[self.kernel]:
+        if derivative_order > MATERN_ORDERS[self.kernel]:
             raise ValueError(
                 f"kernel {self.kernel!r} supports derivative orders up to "
-                f"{MATERN_ORDERS[self.kernel]}, got {order}"
+                f"{MATERN_ORDERS[self.kernel]}, got {derivative_order}"
             )
 
         train = model.X_train_.ravel()
         separation = axis.x[:, None] - train[None, :]
-        cross = _cross_derivative(parts, separation, order)
+        cross = _cross_derivative(parts, separation, derivative_order)
 
         # With standardization the fit was on rescaled targets, so undo it.
         # sklearn stores this as a bare float when normalize_y is on but as
         # array([1.]) when it is off, and float() raises on an array.
         spread = float(np.ravel(np.asarray(getattr(model, "_y_train_std", 1.0)))[0])
         mean = (cross @ model.alpha_).ravel() * spread
-        if order == 0:
+        if derivative_order == 0:
             center = np.ravel(np.asarray(getattr(model, "_y_train_mean", 0.0)))[0]
             mean = mean + float(center) + float(getattr(model, "_incline_offset", 0.0))
 
         # Var = k''(0) - k'(x,X) K^-1 k'(X,x), using the stored Cholesky.
         solved = cho_solve((model.L_, True), cross.T)
         explained = np.einsum("ij,ji->i", cross, solved)
-        variance = _prior_derivative_variance(parts, order) - explained
+        variance = _prior_derivative_variance(parts, derivative_order) - explained
         return mean, np.sqrt(np.maximum(variance, 0.0)) * spread
 
     def evaluate(
-        self, axis: TimeAxis, y: npt.NDArray[np.float64], order: int
+        self, axis: TimeAxis, y: npt.NDArray[np.float64], derivative_order: int
     ) -> Evaluation:
         """Posterior mean of the smooth and of its derivative."""
         values, _ = self._posterior(axis, y, 0)
-        derivative, _ = self._posterior(axis, y, order)
+        derivative, _ = self._posterior(axis, y, derivative_order)
         return Evaluation(values=values, derivative=derivative)
 
     def native_posterior(
         self,
         axis: TimeAxis,
         y: npt.NDArray[np.float64],
-        order: int,
+        derivative_order: int,
         confidence_level: float,
     ) -> tuple[npt.NDArray[np.float64], None, None]:
         """Exact posterior standard deviation of the derivative."""
         del confidence_level
-        _, standard_error = self._posterior(axis, y, order)
+        _, standard_error = self._posterior(axis, y, derivative_order)
         return standard_error, None, None
 
     def with_scale(self, scale: float, axis: TimeAxis) -> Self:
@@ -379,19 +418,20 @@ class GaussianProcess(Smoother):
         Optimization is switched off, or the scale just set would immediately
         be optimized away and every scale in a sweep would return the same fit.
         """
+        scale = _validate_scale(scale)
         span = float(np.ptp(axis.x)) or 1.0
         return replace(
             self,
-            length_scale=max(scale, 1e-6) * span,
+            length_scale=scale * span,
             n_restarts=0,
             optimize=False,
         )
 
-    def scale_of(self, axis: TimeAxis) -> float:
+    def scale_of(self, axis: TimeAxis) -> float | None:
         """Length scale as a fraction of the span."""
         span = float(np.ptp(axis.x)) or 1.0
         if self.length_scale is None:
-            return 0.2
+            return None
         return float(min(self.length_scale / span, 1.0))
 
     def params(self) -> dict[str, Any]:
@@ -411,7 +451,7 @@ class StateSpace(Smoother):
     hyperparameter covariance.
 
     Attributes:
-        seasonal_periods: Length of a seasonal cycle, or None.
+        seasonal_period: Length of a seasonal cycle, or None.
 
     Note:
         The intervals are **conditional on the fitted variances**. Those
@@ -419,24 +459,33 @@ class StateSpace(Smoother):
         is not propagated, so the intervals are somewhat narrow -- most visibly
         on short series.
 
-        A correction for it was tried and removed. It scaled the interval by the
-        relative standard error of each variance parameter, ``bse / |param|``,
-        which is undefined at the boundary -- and variances land exactly on zero
-        routinely, whenever a component is not needed. Measured over 40 fits, the
-        median inflation factor was 1e5 and the maximum 3e8, turning a standard
-        error of 0.017 into 4.6e6. A correction that can be eight orders of
-        magnitude wrong is worse than the bias it was meant to remove.
+        Ad hoc scaling by a variance parameter's relative standard error is not
+        used because that ratio is undefined when a fitted variance reaches its
+        boundary at zero.
 
         There is likewise no damped-trend option. The previous implementation
         accepted one and forwarded it to statsmodels, which has no such
         parameter and ignored it, so the setting did nothing.
+
+        Sampling must be regular. The state transition advances once per
+        observation, so it cannot represent unequal elapsed times.
     """
 
     name: ClassVar[str] = "kalman"
     has_native_posterior: ClassVar[bool] = True
+    requires_regular_grid: ClassVar[bool] = True
     supported_orders: ClassVar[frozenset[int]] = frozenset({1})
 
-    seasonal_periods: int | None = None
+    seasonal_period: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the optional cycle length."""
+        if self.seasonal_period is not None and (
+            isinstance(self.seasonal_period, (bool, np.bool_))
+            or not isinstance(self.seasonal_period, (int, np.integer))
+            or self.seasonal_period < 2
+        ):
+            raise ValueError("seasonal_period must be an integer of at least 2")
 
     def _fitted(self, axis: TimeAxis, y: npt.NDArray[np.float64]) -> Any:
         """Fit the unobserved-components model, reusing an identical fit."""
@@ -452,7 +501,7 @@ class StateSpace(Smoother):
             # A model-name string is documented statsmodels API; the inferred
             # signature only admits the bool default.
             level="local linear trend",  # pyright: ignore[reportArgumentType]
-            seasonal=self.seasonal_periods,
+            seasonal=self.seasonal_period,
         )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -478,10 +527,10 @@ class StateSpace(Smoother):
         return level, slope, standard_error
 
     def evaluate(
-        self, axis: TimeAxis, y: npt.NDArray[np.float64], order: int
+        self, axis: TimeAxis, y: npt.NDArray[np.float64], derivative_order: int
     ) -> Evaluation:
         """Smoothed level and slope."""
-        del order
+        del derivative_order
         level, slope, _ = self._slope(axis, y)
         return Evaluation(values=level, derivative=slope)
 
@@ -489,24 +538,24 @@ class StateSpace(Smoother):
         self,
         axis: TimeAxis,
         y: npt.NDArray[np.float64],
-        order: int,
+        derivative_order: int,
         confidence_level: float,
     ) -> tuple[npt.NDArray[np.float64], None, None]:
         """Standard error of the smoothed slope state."""
-        del order, confidence_level
+        del derivative_order, confidence_level
         _, _, standard_error = self._slope(axis, y)
         return standard_error, None, None
 
     def with_scale(self, scale: float, axis: TimeAxis) -> Self:
-        """No direct scale knob; smoothing follows from the fitted variances."""
-        del scale, axis
-        return self
-
-    def scale_of(self, axis: TimeAxis) -> float:
-        """Nominal scale, since smoothing is chosen by likelihood."""
+        """Reject a scale because smoothing follows from fitted variances."""
+        _validate_scale(scale)
         del axis
-        return 0.2
+        raise ValueError("kalman has no smoothing scale")
+
+    def scale_of(self, axis: TimeAxis) -> None:
+        """Return None because the model has no direct smoothing scale."""
+        del axis
 
     def params(self) -> dict[str, Any]:
         """Report the model configuration."""
-        return {"seasonal_periods": self.seasonal_periods}
+        return {"seasonal_period": self.seasonal_period}

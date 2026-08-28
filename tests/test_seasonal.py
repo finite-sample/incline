@@ -21,7 +21,7 @@ from incline.seasonal import (
     stl_decompose,
     trend_with_deseasonalization,
 )
-from incline.smoothers import PenalizedSpline, SavitzkyGolay
+from incline.smoothers import SavitzkyGolay, SmoothingSpline
 
 N = 200
 
@@ -71,7 +71,6 @@ def test_detection_survives_a_series_too_short_to_analyse():
         ("explicit_simple", lambda: deseasonalize(seasonal_series(), method="simple")),
         ("odd_period", lambda: moving_average_decompose(seasonal_series(), period=7)),
         ("even_period", lambda: moving_average_decompose(seasonal_series(), period=12)),
-        ("unusable_period", lambda: stl_decompose(seasonal_series(), period=999)),
     ],
 )
 def test_every_route_returns_the_same_schema(label, decompose):
@@ -157,22 +156,25 @@ def test_moving_average_fills_the_trailing_edge(period):
     assert np.isfinite(trend.iloc[0])
 
 
-def test_unusable_period_falls_back_to_a_decomposition_shape():
-    """Regression: the fallback must still carry 'deseasonalized'.
+def test_explicit_stl_refuses_an_unusable_period():
+    """An explicit method request must not silently run another estimator."""
+    with pytest.raises(ValueError, match="unusable"):
+        stl_decompose(seasonal_series(), period=999)
 
-    It once returned a trend-estimate frame instead, and every caller that
-    indexed the decomposition columns raised KeyError.
-    """
+
+def test_auto_decomposition_may_fall_back_for_an_unusable_period():
+    """Fallback remains valid when the caller delegated method selection."""
     with pytest.warns(UserWarning, match="unusable"):
-        result = stl_decompose(seasonal_series(), period=999)
-    assert "deseasonalized" in result.columns
-    assert result["deseasonalized"].notna().all()
+        result = deseasonalize(seasonal_series(), method="auto", period=999)
+    assert result["decomposition_method"].iloc[0] == "none"
 
 
 def test_trend_with_deseasonalization_survives_an_unusable_period():
     """Regression: downstream indexing of 'deseasonalized' used to raise."""
     with pytest.warns(UserWarning, match="unusable"):
-        result = trend_with_deseasonalization(seasonal_series(), period=999)
+        result = trend_with_deseasonalization(
+            seasonal_series(), method="auto", period=999
+        )
     assert "derivative_value" in result.columns
     assert result["derivative_value"].notna().sum() > N // 2
 
@@ -194,15 +196,15 @@ def test_trend_with_deseasonalization_has_one_schema(data):
 
 
 def test_trend_with_deseasonalization_forwards_uncertainty_options():
-    """The wrapper must pass se= through rather than swallowing it."""
+    """The wrapper must pass with_uncertainty= through rather than swallowing it."""
     result = trend_with_deseasonalization(
         seasonal_series(),
         SavitzkyGolay(window_length=21),
-        se=True,
+        with_uncertainty=True,
         n_bootstrap=30,
         random_state=1,
     )
-    assert result["derivative_se"].notna().any()
+    assert result["derivative_standard_error"].notna().any()
 
 
 def test_uncertainty_accounts_for_the_seasonal_fit_by_default():
@@ -210,16 +212,16 @@ def test_uncertainty_accounts_for_the_seasonal_fit_by_default():
 
     The seasonal component was estimated from the same data, so an interval
     conditional on it covers 0.917 against a nominal 0.95. The wrapper
-    bootstraps the whole pipeline instead, which is why se_method says so.
+    bootstraps the whole pipeline instead, which is why uncertainty_method says so.
     """
     result = trend_with_deseasonalization(
         seasonal_series(),
         SavitzkyGolay(window_length=21),
-        se=True,
+        with_uncertainty=True,
         n_bootstrap=30,
         random_state=1,
     )
-    assert result["se_method"].iloc[0] == "pipeline_bootstrap"
+    assert result["uncertainty_method"].iloc[0] == "pipeline_bootstrap"
 
 
 def test_no_bootstrap_cost_when_no_standard_error_is_asked_for():
@@ -227,14 +229,14 @@ def test_no_bootstrap_cost_when_no_standard_error_is_asked_for():
     result = trend_with_deseasonalization(
         seasonal_series(), SavitzkyGolay(window_length=21)
     )
-    assert result["derivative_se"].isna().all()
-    assert result["se_method"].iloc[0] is None
+    assert result["derivative_standard_error"].isna().all()
+    assert result["uncertainty_method"].iloc[0] is None
 
 
 def test_it_works_with_any_smoother():
     """Taking a Smoother rather than a name is the point of the rewrite."""
     data = seasonal_series()
-    for smoother in (SavitzkyGolay(window_length=15), PenalizedSpline(lam=1e4)):
+    for smoother in (SavitzkyGolay(window_length=15), SmoothingSpline(penalty=1e4)):
         result = trend_with_deseasonalization(data, smoother)
         assert result["derivative_method"].iloc[0] == smoother.name
 
@@ -257,7 +259,7 @@ def test_pipeline_bootstrap_honors_confidence_level():
     narrow = trend_with_deseasonalization(
         data,
         smoother,
-        se=True,
+        with_uncertainty=True,
         confidence_level=0.50,
         n_bootstrap=40,
         random_state=1,
@@ -265,7 +267,7 @@ def test_pipeline_bootstrap_honors_confidence_level():
     wide = trend_with_deseasonalization(
         data,
         smoother,
-        se=True,
+        with_uncertainty=True,
         confidence_level=0.99,
         n_bootstrap=40,
         random_state=1,
@@ -295,11 +297,15 @@ def test_pure_noise_is_not_uniformly_significant():
         index=pd.date_range("2020-01-01", periods=96, freq="ME"),
     )
     result = trend_with_deseasonalization(
-        frame, smoother=PenalizedSpline(), se=True, n_bootstrap=40, random_state=0
+        frame,
+        smoother=SmoothingSpline(),
+        with_uncertainty=True,
+        n_bootstrap=40,
+        random_state=0,
     )
     rate = float(result["significant_trend"].mean())
     assert rate < 0.5, f"{rate:.0%} of a pure-noise series flagged as trending"
-    assert float(result["derivative_se"].median()) > 1e-6
+    assert float(result["derivative_standard_error"].median()) > 1e-6
 
 
 def test_a_constant_series_reports_no_trend():
@@ -312,6 +318,10 @@ def test_a_constant_series_reports_no_trend():
     # can be bootstrapped. That warning is the substance of this test.
     with pytest.warns(UserWarning, match="no estimable noise level"):
         result = trend_with_deseasonalization(
-            frame, smoother=PenalizedSpline(), se=True, n_bootstrap=20, random_state=0
+            frame,
+            smoother=SmoothingSpline(),
+            with_uncertainty=True,
+            n_bootstrap=20,
+            random_state=0,
         )
     assert not result["significant_trend"].any()

@@ -21,10 +21,9 @@ Why the residual bootstrap rescales
 -----------------------------------
 Residuals from a smoother are shrunk by ``(I - S)``: the fit has already
 absorbed part of the noise. Resampling them directly understates the noise, and
-the measured consequence is severe -- 95% intervals that cover 76% of the time,
-with standard errors 46% of their true size. Rescaling the residuals to a
-difference-based noise estimate, which never touches the smoother, restores
-coverage to 0.975 with a variance ratio of 0.997.
+therefore understates uncertainty. Rescaling the residuals to a difference-based
+noise estimate preserves a target noise level that does not depend on the
+smoother being evaluated.
 """
 
 from __future__ import annotations
@@ -44,7 +43,7 @@ if TYPE_CHECKING:
 
 # Relative tolerance for calling an estimator linear. Probing is exact up to
 # floating point, so genuine linear smoothers land near 1e-15; the nonlinear
-# ones miss by factors of order 1.
+# ones miss by factors of derivative_order 1.
 LINEARITY_TOLERANCE = 1e-8
 
 # Draws used to find a simultaneous band's critical value.
@@ -196,7 +195,7 @@ def simultaneous_critical_value(
 
     covariance = operator @ noise.covariance(n) @ operator.T
     covariance = (covariance + covariance.T) / 2
-    # Jitter keeps the Cholesky-free eigen route stable on near-singular maps.
+    # Clamp roundoff-scale negative eigenvalues on near-singular maps.
     eigenvalues, eigenvectors = np.linalg.eigh(covariance)
     eigenvalues = np.maximum(eigenvalues, 0.0)
     factor = eigenvectors * np.sqrt(eigenvalues)
@@ -271,7 +270,8 @@ def residual_bootstrap(
     # The scale to resample at comes from the caller's noise model when there is
     # one. Recomputing it here regardless, as this once did, makes `noise=` a
     # no-op for every smoother that is bootstrapped rather than probed: an
-    # explicit IID(sigma=...), Heteroskedastic or Given had no effect at all.
+    # explicit IID(standard_deviation=...), Heteroskedastic or Given had no
+    # effect at all.
     target = (
         np.full(n, rice_sigma(y))
         if scale is None
@@ -334,6 +334,72 @@ def residual_bootstrap(
         upper = np.nanpercentile(draws, 100 * (1 - alpha / 2), axis=0)
 
     return se, lower, upper
+
+
+def parametric_bootstrap(
+    fitted: npt.NDArray[np.float64],
+    refit: Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
+    noise: NoiseFit,
+    n_bootstrap: int = 200,
+    confidence_level: float = 0.95,
+    random_state: int | np.random.Generator | None = None,
+) -> tuple[
+    npt.NDArray[np.float64] | None,
+    npt.NDArray[np.float64] | None,
+    npt.NDArray[np.float64] | None,
+]:
+    """Refit over Gaussian draws from a fitted covariance model.
+
+    Unlike a residual block bootstrap, this preserves the complete covariance
+    supplied to the estimator. It is used when the covariance also participates
+    in selecting the smoother, so every replicate repeats that selection.
+
+    Args:
+        fitted: Smoothed values from the original fit.
+        refit: Maps a simulated response to a derivative estimate.
+        noise: Fitted covariance model to simulate from.
+        n_bootstrap: Number of replicates.
+        confidence_level: Confidence level for the percentile interval.
+        random_state: Seed or Generator.
+
+    Returns:
+        Tuple of ``(standard_error, ci_lower, ci_upper)``.
+    """
+    fitted = np.asarray(fitted, dtype=np.float64)
+    errors = noise.gaussian_draws(len(fitted), n_bootstrap, random_state)
+    replicates: list[npt.NDArray[np.float64]] = []
+    failures = 0
+    for error in errors:
+        try:
+            estimate = np.asarray(refit(fitted + error), dtype=np.float64)
+        except Exception:  # one bad replicate must not abort the rest
+            failures += 1
+            continue
+        if estimate.shape == fitted.shape:
+            replicates.append(estimate)
+        else:
+            failures += 1
+
+    if not replicates:
+        warnings.warn(
+            "Every parametric bootstrap replicate failed; no standard errors computed.",
+            stacklevel=2,
+        )
+        return None, None, None
+    if failures:
+        warnings.warn(
+            f"{failures} of {n_bootstrap} parametric bootstrap replicates failed.",
+            stacklevel=2,
+        )
+
+    draws = np.asarray(replicates)
+    alpha = 1.0 - confidence_level
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        standard_error = np.nanstd(draws, axis=0)
+        lower = np.nanpercentile(draws, 100 * alpha / 2, axis=0)
+        upper = np.nanpercentile(draws, 100 * (1 - alpha / 2), axis=0)
+    return standard_error, lower, upper
 
 
 def _draw_residuals(

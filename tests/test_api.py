@@ -8,7 +8,7 @@ you reach for.
 
 from __future__ import annotations
 
-import warnings
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -19,15 +19,15 @@ from incline.result import CORE_COLUMNS
 from incline.smoothers import SMOOTHERS
 
 N = 80
+L1_ESTIMATOR = partial(api.l1_trend_filter, penalty_fraction=0.2)
 
 ESTIMATORS = [
     pytest.param(api.naive_trend, id="naive"),
     pytest.param(api.sgolay_trend, id="sgolay"),
-    pytest.param(api.spline_trend, id="spline"),
-    pytest.param(api.pspline_trend, id="pspline"),
+    pytest.param(api.smoothing_spline_trend, id="smoothing_spline"),
     pytest.param(api.loess_trend, id="loess"),
     pytest.param(api.local_polynomial_trend, id="local_poly"),
-    pytest.param(api.l1_trend_filter, id="l1_filter"),
+    pytest.param(L1_ESTIMATOR, id="l1_filter"),
     pytest.param(api.gp_trend, id="gp"),
     pytest.param(api.kalman_trend, id="kalman"),
 ]
@@ -64,20 +64,22 @@ def test_every_estimator_returns_the_core_schema(estimator):
 
 @pytest.mark.parametrize("estimator", ESTIMATORS)
 def test_uncertainty_is_opt_in(estimator):
-    """Without se=True the columns exist and are honestly empty."""
+    """Without with_uncertainty=True the columns exist and are honestly empty."""
     result = estimator(frame())
-    assert result["derivative_se"].isna().all()
-    assert result["se_method"].isna().all() | (result["se_method"].iloc[0] is None)
+    assert result["derivative_standard_error"].isna().all()
+    assert result["uncertainty_method"].isna().all() | (
+        result["uncertainty_method"].iloc[0] is None
+    )
     assert not result["significant_trend"].any()
 
 
 @pytest.mark.parametrize("estimator", ESTIMATORS)
 def test_se_true_fills_in_the_uncertainty(estimator):
     """And with it, every uncertainty column is populated."""
-    result = estimator(frame(), se=True, n_bootstrap=30)
-    assert result["derivative_se"].notna().any()
+    result = estimator(frame(), with_uncertainty=True, n_bootstrap=30)
+    assert result["derivative_standard_error"].notna().any()
     assert result["derivative_ci_lower"].notna().any()
-    assert result["se_method"].iloc[0] in {"operator", "bootstrap", "native"}
+    assert result["uncertainty_method"].iloc[0] in {"operator", "bootstrap", "native"}
 
 
 @pytest.mark.parametrize("estimator", ESTIMATORS)
@@ -122,10 +124,18 @@ def test_wider_confidence_level_widens_the_interval(estimator):
     """
     data = frame(3)
     narrow = estimator(
-        data, se=True, confidence_level=0.5, n_bootstrap=30, random_state=1
+        data,
+        with_uncertainty=True,
+        confidence_level=0.5,
+        n_bootstrap=30,
+        random_state=1,
     )
     wide = estimator(
-        data, se=True, confidence_level=0.99, n_bootstrap=30, random_state=1
+        data,
+        with_uncertainty=True,
+        confidence_level=0.99,
+        n_bootstrap=30,
+        random_state=1,
     )
     narrow_width = (
         narrow["derivative_ci_upper"] - narrow["derivative_ci_lower"]
@@ -138,47 +148,50 @@ def test_wider_confidence_level_widens_the_interval(estimator):
 def test_custom_value_column_is_honoured(estimator):
     """Nobody's column is called 'value'."""
     data = frame().rename(columns={"value": "price"})
-    result = estimator(data, column_value="price")
+    result = estimator(data, value_column="price")
     assert "price" in result.columns
     assert result["derivative_value"].notna().sum() > N // 2
 
 
-@pytest.mark.parametrize("estimator", ESTIMATORS)
-def test_irregular_sampling_is_handled(estimator):
-    """Unevenly spaced observations are ordinary, not exceptional."""
+@pytest.mark.parametrize(
+    "estimator",
+    [
+        pytest.param(api.smoothing_spline_trend, id="smoothing_spline"),
+        pytest.param(api.loess_trend, id="loess"),
+        pytest.param(api.local_polynomial_trend, id="local_poly"),
+        pytest.param(L1_ESTIMATOR, id="l1_filter"),
+        pytest.param(api.gp_trend, id="gp"),
+    ],
+)
+def test_irregular_sampling_is_handled_by_irregular_grid_methods(estimator):
+    """Methods whose arithmetic uses the actual axis accept uneven spacing."""
     rng = np.random.default_rng(5)
     x = np.sort(rng.uniform(0, 100, N))
     data = pd.DataFrame({"value": 0.05 * x + rng.normal(0, 0.2, N), "t": x})
-    # A grid-based method may warn that its assumption is violated. That is the
-    # correct behavior, so accept it; what matters is that it still returns.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        result = estimator(data, time_column="t")
+    result = estimator(data, time_column="t")
     assert result["derivative_value"].notna().sum() > N // 2
 
 
-def test_select_trend_method_returns_a_registered_name():
-    """Regression: whatever the selector recommends must be usable.
-
-    It once returned a name that the dispatcher then refused.
-    """
-    for criteria in ("auto", "robust", "smooth", "changepoints", "exact"):
-        name = api.select_trend_method(frame(), criteria=criteria)
-        assert name in SMOOTHERS, f"{criteria} -> {name}"
-
-
-def test_every_selected_method_is_accepted_by_estimate_trend():
-    """The selector and the dispatcher must agree on the vocabulary."""
-    for criteria in ("auto", "robust", "smooth", "changepoints", "exact"):
-        name = api.select_trend_method(frame(), criteria=criteria)
-        result = api.estimate_trend(frame(), method=name)
-        assert result["derivative_method"].iloc[0] == name
+@pytest.mark.parametrize(
+    "estimator", [api.naive_trend, api.sgolay_trend, api.kalman_trend]
+)
+def test_irregular_sampling_is_refused_by_grid_methods(estimator):
+    """Grid stencils must not return a known-wrong derivative off-grid."""
+    rng = np.random.default_rng(5)
+    x = np.sort(rng.uniform(0, 100, N))
+    data = pd.DataFrame({"value": 2.0 * x, "t": x})
+    with pytest.raises(ValueError, match="uniform sampling"):
+        estimator(data, time_column="t")
 
 
-def test_unknown_criteria_is_refused():
-    """A typo must not silently fall through to 'auto'."""
-    with pytest.raises(ValueError, match="Unknown criteria"):
-        api.select_trend_method(frame(), criteria="fastest")
+def test_estimate_trend_defaults_to_smoothing_spline():
+    result = api.estimate_trend(frame())
+    assert result["derivative_method"].iloc[0] == "smoothing_spline"
+
+
+def test_removed_auto_method_is_refused():
+    with pytest.raises(ValueError, match="Unknown method"):
+        api.estimate_trend(frame(), method="auto")
 
 
 def test_unknown_method_is_refused():
@@ -190,27 +203,67 @@ def test_unknown_method_is_refused():
 @pytest.mark.parametrize("name", sorted(SMOOTHERS))
 def test_estimate_trend_reaches_every_registered_smoother(name):
     """A newly registered smoother is reachable without editing the dispatcher."""
-    result = api.estimate_trend(frame(), method=name)
+    if name == "l1_filter":
+        result = api.estimate_trend(frame(), method=name, penalty_fraction=0.2)
+    else:
+        result = api.estimate_trend(frame(), method=name)
     assert result["derivative_method"].iloc[0] == name
 
 
 def test_estimate_trend_splits_constructor_and_fit_arguments():
     """Smoother settings and uncertainty options arrive through one **kwargs."""
     result = api.estimate_trend(
-        frame(), method="sgolay", window_length=21, se=True, confidence_level=0.9
+        frame(),
+        method="sgolay",
+        window_length=21,
+        with_uncertainty=True,
+        confidence_level=0.9,
     )
     assert result["window_length"].iloc[0] == 21
-    assert result["derivative_se"].notna().any()
+    assert result["derivative_standard_error"].notna().any()
+
+
+def test_pilot_scale_reaches_bias_correction_through_both_public_routes():
+    """The public facades must expose every supported fit option."""
+    data = frame()
+    smoother = SMOOTHERS["sgolay"](window_length=21)
+    structured = api.estimate(
+        smoother,
+        data,
+        with_uncertainty=True,
+        bias_correct=True,
+        pilot_scale=0.1,
+    )
+    tabular = api.estimate_trend(
+        data,
+        method="sgolay",
+        window_length=21,
+        with_uncertainty=True,
+        bias_correct=True,
+        pilot_scale=0.1,
+    )
+    np.testing.assert_allclose(
+        tabular["derivative_value"], structured.derivative, equal_nan=True
+    )
 
 
 def test_estimate_returns_the_structured_object():
     """The object form is available for callers who want more than a frame."""
     from incline.smoothers import SavitzkyGolay
 
-    estimate = api.estimate(SavitzkyGolay(), frame(), se=True)
-    assert estimate.se is not None
+    estimate = api.estimate(SavitzkyGolay(), frame(), with_uncertainty=True)
+    assert estimate.standard_error is not None
     assert estimate.provenance.method == "sgolay"
     assert next(iter(estimate.to_frame(frame()).columns)) == "value"
+
+
+def test_estimate_preserves_the_source_index_without_the_source_frame():
+    """The structured result must not discard a meaningful input index."""
+    from incline.smoothers import SavitzkyGolay
+
+    data = frame()
+    result = api.estimate(SavitzkyGolay(), data).to_frame()
+    pd.testing.assert_index_equal(result.index, data.index)
 
 
 @pytest.mark.parametrize("estimator", ESTIMATORS)
@@ -251,9 +304,53 @@ def test_a_class_attribute_is_not_a_constructor_argument():
             api.estimate_trend(frame, method="sgolay", **{attribute: False})
 
 
+@pytest.mark.parametrize(
+    ("function", "old_name", "value"),
+    [
+        (api.sgolay_trend, "column_value", "value"),
+        (api.sgolay_trend, "function_order", 3),
+        (api.sgolay_trend, "se", True),
+        (api.smoothing_spline_trend, "s", 5.0),
+        (api.smoothing_spline_trend, "lam", 1.0),
+        (partial(api.l1_trend_filter, penalty_fraction=0.2), "lambda_param", 1.0),
+        (api.loess_trend, "frac", 0.3),
+        (api.kalman_trend, "seasonal_periods", 12),
+        (api.loess_trend, "degree", 2),
+    ],
+)
+def test_removed_public_names_are_not_accepted(function, old_name, value):
+    """The breaking vocabulary migration leaves no hidden compatibility layer."""
+    with pytest.raises(TypeError):
+        function(frame(), **{old_name: value})
+
+
+def test_l1_function_requires_exactly_one_penalty_parameter():
+    """The functional API must not choose an undocumented smoothing strength."""
+    with pytest.raises(ValueError, match="exactly one"):
+        api.l1_trend_filter(frame())
+    with pytest.raises(ValueError, match="exactly one"):
+        api.l1_trend_filter(frame(), penalty=1.0, penalty_fraction=0.2)
+
+
+def test_removed_spline_apis_are_not_exported():
+    """The removed spline implementations leave no compatibility aliases."""
+    import incline
+
+    for name in (
+        "InterpolatingSpline",
+        "PenalizedSpline",
+        "pspline_trend",
+        "spline_trend",
+    ):
+        assert not hasattr(incline, name)
+        assert not hasattr(api, name)
+
+
 def test_uncertainty_options_reach_the_fit_and_settings_reach_the_constructor():
     """The two destinations stay distinguishable after the allowlist."""
     frame = pd.DataFrame({"value": np.arange(60.0) * 0.1})
-    result = api.estimate_trend(frame, method="sgolay", window_length=21, se=True)
+    result = api.estimate_trend(
+        frame, method="sgolay", window_length=21, with_uncertainty=True
+    )
     assert result["window_length"].iloc[0] == 21
-    assert result["derivative_se"].notna().all()
+    assert result["derivative_standard_error"].notna().all()

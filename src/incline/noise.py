@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -38,6 +38,47 @@ _SECOND_DIFF = np.array([1.0, -2.0, 1.0])
 _MATCH_LAGS = 4
 
 _PHI_GRID = np.linspace(0.0, 0.95, 192)
+
+
+def _validate_sigma(name: str, value: float | None) -> None:
+    """Validate a scalar noise standard deviation."""
+    if value is None:
+        return
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        or not np.isfinite(value)
+        or float(value) < 0.0
+    ):
+        raise ValueError(f"{name} must be a finite non-negative scalar")
+
+
+def _validate_covariance(value: npt.ArrayLike) -> npt.NDArray[np.float64]:
+    """Return a finite, symmetric, positive-semidefinite covariance matrix."""
+    raw = np.asarray(value)
+    if np.iscomplexobj(raw):
+        raise ValueError("covariance must be real")
+    try:
+        covariance = np.asarray(value, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("covariance must be a numeric matrix") from exc
+    if (
+        covariance.ndim != 2
+        or covariance.shape[0] != covariance.shape[1]
+        or covariance.shape[0] == 0
+    ):
+        raise ValueError("covariance must be a non-empty square matrix")
+    if not np.all(np.isfinite(covariance)):
+        raise ValueError("covariance must contain only finite values")
+    if not np.allclose(covariance, covariance.T, rtol=1e-10, atol=1e-12):
+        raise ValueError("covariance must be symmetric")
+
+    eigenvalues = np.linalg.eigvalsh(covariance)
+    scale = max(float(np.max(np.abs(eigenvalues))), 1.0)
+    tolerance = 100 * np.finfo(float).eps * covariance.shape[0] * scale
+    if float(eigenvalues[0]) < -tolerance:
+        raise ValueError("covariance must be positive semidefinite")
+    return covariance
 
 
 def _second_difference(y: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
@@ -66,8 +107,8 @@ def rice_sigma(y: npt.NDArray[np.float64]) -> float:
     """Estimate the noise standard deviation from second differences.
 
     The Gasser-Sroka-Jennen-Steinmetz estimator. For a smooth mean function the
-    second difference has variance ``6 * sigma**2``, so ``sigma**2`` is the
-    mean squared second difference over six.
+    second difference has variance ``6 * standard_deviation**2``, so the
+    noise variance is the mean squared second difference over six.
 
     Curvature in the mean inflates this slightly, which makes it mildly
     conservative -- the preferred direction of error for an interval width.
@@ -101,15 +142,15 @@ def estimate_ar1(
     Args:
         y: Observed values.
         phi: Use this autocorrelation instead of identifying one, and scale
-            sigma to match it. Sigma is derived by dividing the observed
+            standard_deviation to match it. Sigma is derived by dividing the observed
             autocovariance by its theoretical value *at a particular phi*, so a
-            sigma computed for one phi does not describe the process at
+            standard_deviation computed for one phi does not describe the process at
             another: over the grid that divisor ranges from 6 down to 0.9, an
             order of magnitude.
 
     Returns:
-        Tuple of (phi, sigma), where sigma is the marginal standard deviation
-        of the noise process.
+        Tuple of (phi, standard_deviation), where standard_deviation is the
+        marginal standard deviation of the noise process.
     """
     y = np.asarray(y, dtype=float)
     y = y[np.isfinite(y)]
@@ -125,7 +166,7 @@ def estimate_ar1(
         theoretical = np.array(
             [[_theoretical_acov(p, k) for k in range(_MATCH_LAGS)] for p in _PHI_GRID]
         )
-        # Match the *shape* of the autocovariance; the level fixes sigma below.
+        # Match the autocovariance shape; its level fixes the scale below.
         normalized = theoretical / theoretical[:, [0]]
         target = empirical / empirical[0]
         phi = float(
@@ -137,7 +178,7 @@ def estimate_ar1(
 
 
 def local_sigma(
-    y: npt.NDArray[np.float64], window: int = 25
+    y: npt.NDArray[np.float64], window_length: int = 25
 ) -> npt.NDArray[np.float64]:
     """Estimate a noise level that varies across the series.
 
@@ -147,13 +188,26 @@ def local_sigma(
 
     Args:
         y: Observed values.
-        window: Number of second differences averaged at each point. Wider is
+        window_length: Number of second differences averaged at each point. Wider is
             steadier but slower to follow a change in scale.
 
     Returns:
         Estimated noise standard deviation at each point.
+
+    Raises:
+        ValueError: If ``y`` is not one-dimensional or ``window_length`` is
+            not an odd integer of at least three.
     """
     y = np.asarray(y, dtype=float)
+    if y.ndim != 1:
+        raise ValueError("y must be one-dimensional")
+    if (
+        isinstance(window_length, (bool, np.bool_))
+        or not isinstance(window_length, (int, np.integer))
+        or window_length < 3
+        or window_length % 2 == 0
+    ):
+        raise ValueError("window_length must be an odd integer of at least 3")
     n = len(y)
     if n < 3:
         return np.full(n, rice_sigma(y))
@@ -166,7 +220,7 @@ def local_sigma(
     squared[0] = d2[0]
     squared[-1] = d2[-1]
 
-    half = max(window // 2, 1)
+    half = max(window_length // 2, 1)
     padded = np.pad(squared, half, mode="edge")
     kernel = np.ones(2 * half + 1) / (2 * half + 1)
     smoothed = np.convolve(padded, kernel, mode="valid")[:n]
@@ -178,32 +232,57 @@ class NoiseFit:
     """A noise process fitted to a series.
 
     Attributes:
-        sigma: Marginal standard deviation of the noise.
+        standard_deviation: Marginal standard deviation of the noise.
         phi: AR(1) coefficient. Zero means independent.
         explicit: A caller-supplied covariance matrix, used verbatim when set.
-        sigma_vector: Per-point standard deviations, when the scale varies.
+        standard_deviation_vector: Per-point standard deviations, when the scale varies.
         scale_is_stated: Whether the scale came from the caller or from a
             plain scalar estimate. Decides whether the bootstrap adopts it.
+        structure: Covariance structure used to produce the fit.
     """
 
-    sigma: float
+    standard_deviation: float
     phi: float = 0.0
     explicit: npt.NDArray[np.float64] | None = None
-    sigma_vector: npt.NDArray[np.float64] | None = None
+    standard_deviation_vector: npt.NDArray[np.float64] | None = None
     scale_is_stated: bool = False
+    structure: Literal["iid", "ar1", "heteroskedastic", "given"] = "iid"
+
+    def __post_init__(self) -> None:
+        """Validate the fitted covariance representation."""
+        _validate_sigma("standard_deviation", self.standard_deviation)
+        if (
+            isinstance(self.phi, (bool, np.bool_))
+            or not isinstance(self.phi, (int, float, np.integer, np.floating))
+            or not np.isfinite(self.phi)
+            or not -1.0 < self.phi < 1.0
+        ):
+            raise ValueError("phi must be finite and strictly between -1 and 1")
+        if self.standard_deviation_vector is not None:
+            vector = np.asarray(self.standard_deviation_vector, dtype=float)
+            if (
+                vector.ndim != 1
+                or not np.all(np.isfinite(vector))
+                or np.any(vector < 0)
+            ):
+                raise ValueError(
+                    "standard_deviation_vector must be finite, nonnegative and "
+                    "one-dimensional"
+                )
+            object.__setattr__(self, "standard_deviation_vector", vector)
+        if self.explicit is not None:
+            object.__setattr__(self, "explicit", _validate_covariance(self.explicit))
+        if not isinstance(self.scale_is_stated, (bool, np.bool_)):
+            raise ValueError("scale_is_stated must be boolean")
+        if self.structure not in {"iid", "ar1", "heteroskedastic", "given"}:
+            raise ValueError("structure must name a supported covariance structure")
 
     def bootstrap_scale(self, n: int) -> npt.NDArray[np.float64] | None:
         """The scale a residual bootstrap should resample at, if this fixes one.
 
-        Returns None when the scale is a plain scalar this module estimated,
-        leaving the bootstrap to use its own difference-based estimate -- which
-        is the one its rescaling was calibrated against.
-
-        The distinction is not fussiness. Feeding :func:`estimate_ar1`'s sigma
-        to the bootstrap looks principled and measures badly: that estimator
-        exists to pair with a full AR(1) covariance in ``propagate``, and used
-        alone it ran about 1.4x high, which on top of an already over-dispersed
-        block bootstrap gave standard errors 2.8x the estimator's real spread.
+        A caller-supplied scale is preserved. A scalar estimated for a complete
+        covariance model is not reused as an independent residual scale; the
+        residual bootstrap estimates its compatible target directly.
 
         Args:
             n: Number of observations.
@@ -214,10 +293,10 @@ class NoiseFit:
         """
         if self.explicit is not None:
             return np.sqrt(np.maximum(np.diag(self.explicit), 0.0))
-        if self.sigma_vector is not None:
-            return np.asarray(self.sigma_vector, dtype=np.float64)
+        if self.standard_deviation_vector is not None:
+            return np.asarray(self.standard_deviation_vector, dtype=np.float64)
         if self.scale_is_stated:
-            return np.full(n, self.sigma, dtype=np.float64)
+            return np.full(n, self.standard_deviation, dtype=np.float64)
         return None
 
     def covariance(self, n: int) -> npt.NDArray[np.float64]:
@@ -231,10 +310,72 @@ class NoiseFit:
         """
         if self.explicit is not None:
             return self.explicit
-        if self.sigma_vector is not None:
-            return np.diag(self.sigma_vector**2)
+        if self.standard_deviation_vector is not None:
+            return np.diag(self.standard_deviation_vector**2)
         lags = np.abs(np.subtract.outer(np.arange(n), np.arange(n)))
-        return self.sigma**2 * self.phi**lags
+        return self.standard_deviation**2 * self.phi**lags
+
+    def gaussian_draws(
+        self,
+        n: int,
+        n_draws: int,
+        random_state: int | np.random.Generator | None = None,
+    ) -> npt.NDArray[np.float64]:
+        """Draw Gaussian noise with this fitted covariance.
+
+        Args:
+            n: Number of observations per draw.
+            n_draws: Number of independent draws.
+            random_state: Seed or Generator.
+
+        Returns:
+            Array with shape ``(n_draws, n)``.
+
+        Raises:
+            ValueError: If a count is invalid or does not match the fitted
+                covariance dimension.
+        """
+        for name, value in (("n", n), ("n_draws", n_draws)):
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, (int, np.integer))
+                or int(value) < 1
+            ):
+                raise ValueError(f"{name} must be a positive integer")
+        if self.explicit is not None and self.explicit.shape != (n, n):
+            raise ValueError(
+                f"explicit covariance must be {(n, n)}, got {self.explicit.shape}"
+            )
+        if (
+            self.standard_deviation_vector is not None
+            and self.standard_deviation_vector.shape != (n,)
+        ):
+            raise ValueError(
+                "standard_deviation_vector must have one value per observation "
+                f"({n}), got {self.standard_deviation_vector.shape}"
+            )
+        rng = np.random.default_rng(random_state)
+        if self.explicit is not None:
+            eigenvalues, eigenvectors = np.linalg.eigh(self.explicit)
+            factor = eigenvectors * np.sqrt(np.maximum(eigenvalues, 0.0))
+            return rng.standard_normal((n_draws, n)) @ factor.T
+        if self.standard_deviation_vector is not None:
+            return rng.standard_normal((n_draws, n)) * self.standard_deviation_vector
+        if self.phi == 0.0:
+            return rng.normal(
+                scale=self.standard_deviation,
+                size=(n_draws, n),
+            )
+
+        draws = np.empty((n_draws, n), dtype=np.float64)
+        draws[:, 0] = rng.normal(scale=self.standard_deviation, size=n_draws)
+        innovation_scale = self.standard_deviation * np.sqrt(1.0 - self.phi**2)
+        for index in range(1, n):
+            draws[:, index] = self.phi * draws[:, index - 1] + rng.normal(
+                scale=innovation_scale,
+                size=n_draws,
+            )
+        return draws
 
     def propagate(self, operator: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """Push the noise through a linear operator.
@@ -254,16 +395,16 @@ class NoiseFit:
                 "ij,jk,ik->i", operator, self.explicit, operator, optimize=True
             )
 
-        if self.sigma_vector is not None:
+        if self.standard_deviation_vector is not None:
             # Diagonal but not constant: each column carries its own variance.
-            return np.sum(operator**2 * self.sigma_vector**2, axis=1)
+            return np.sum(operator**2 * self.standard_deviation_vector**2, axis=1)
 
         if self.phi == 0.0:
             # Sigma is diagonal, so no matrix product is needed.
-            return self.sigma**2 * np.sum(operator**2, axis=1)
+            return self.standard_deviation**2 * np.sum(operator**2, axis=1)
 
         # Sigma is symmetric Toeplitz; exploit that rather than forming it.
-        band = self.sigma**2 * self.phi ** np.arange(n)
+        band = self.standard_deviation**2 * self.phi ** np.arange(n)
         sigma_lt = np.asarray(
             matmul_toeplitz((band, band), operator.T), dtype=np.float64
         )
@@ -295,17 +436,24 @@ class IID(NoiseModel):
     :class:`AR1` when dependence is plausible.
 
     Attributes:
-        sigma: Fixed noise level. Estimated from the data when None.
+        standard_deviation: Fixed noise level. Estimated from the data when None.
     """
 
-    sigma: float | None = None
+    standard_deviation: float | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the stated noise scale."""
+        _validate_sigma("standard_deviation", self.standard_deviation)
 
     def estimate(self, y: npt.NDArray[np.float64], axis: TimeAxis) -> NoiseFit:
         """Estimate the noise level, or use the supplied one."""
         del axis
         return NoiseFit(
-            sigma=rice_sigma(y) if self.sigma is None else self.sigma,
-            scale_is_stated=self.sigma is not None,
+            standard_deviation=rice_sigma(y)
+            if self.standard_deviation is None
+            else self.standard_deviation,
+            scale_is_stated=self.standard_deviation is not None,
+            structure="iid",
         )
 
 
@@ -315,22 +463,36 @@ class AR1(NoiseModel):
 
     Attributes:
         phi: Fixed autocorrelation. Estimated from the data when None.
-        sigma: Fixed marginal noise level. Estimated when None.
+        standard_deviation: Fixed marginal noise level. Estimated when None.
     """
 
     phi: float | None = None
-    sigma: float | None = None
+    standard_deviation: float | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the stationary AR(1) parameter domain."""
+        if self.phi is not None and (
+            isinstance(self.phi, (bool, np.bool_))
+            or not isinstance(self.phi, (int, float, np.integer, np.floating))
+            or not np.isfinite(self.phi)
+            or not -1.0 < float(self.phi) < 1.0
+        ):
+            raise ValueError("phi must be finite and strictly between -1 and 1")
+        _validate_sigma("standard_deviation", self.standard_deviation)
 
     def estimate(self, y: npt.NDArray[np.float64], axis: TimeAxis) -> NoiseFit:
-        """Estimate phi and sigma, or use the supplied values."""
+        """Estimate phi and standard_deviation, or use the supplied values."""
         del axis
-        # Pass the caller's phi in, so sigma is rescaled to match it rather
+        # Pass the caller's phi in, so standard_deviation is rescaled to match it rather
         # than left at a value calibrated for a different autocorrelation.
         phi_hat, sigma_hat = estimate_ar1(y, self.phi)
         return NoiseFit(
-            sigma=self.sigma if self.sigma is not None else sigma_hat,
+            standard_deviation=self.standard_deviation
+            if self.standard_deviation is not None
+            else sigma_hat,
             phi=phi_hat,
-            scale_is_stated=self.sigma is not None,
+            scale_is_stated=self.standard_deviation is not None,
+            structure="ar1",
         )
 
 
@@ -338,36 +500,61 @@ class AR1(NoiseModel):
 class Heteroskedastic(NoiseModel):
     """Independent noise whose scale changes across the series.
 
-    Assuming one constant noise level when the scale varies gets the *average*
-    right and everything else wrong, in opposite directions at the two ends.
-    Measured on a series whose noise standard deviation rises from 0.2 to 1.0,
-    with a nominal 95% interval: coverage 1.000 and a standard error 2.0x too
-    large in the quiet stretch, coverage 0.828 and a standard error 0.70x too
-    small in the noisy one. The midpoint looks perfect, which is what makes it
-    easy to miss.
+    A constant noise model cannot represent changing local scale: it tends to
+    overstate uncertainty in quieter regions and understate it in noisier ones.
 
     Attributes:
-        sigma: Per-point standard deviations. Estimated locally when None.
-        window: Points averaged by the local estimator.
+        standard_deviation: Per-point standard deviations. Estimated locally when None.
+        window_length: Points averaged by the local estimator.
     """
 
-    sigma: npt.NDArray[np.float64] | None = None
-    window: int = 25
+    standard_deviation: npt.NDArray[np.float64] | None = None
+    window_length: int = 25
+
+    def __post_init__(self) -> None:
+        """Validate a stated per-observation noise scale."""
+        if (
+            isinstance(self.window_length, (bool, np.bool_))
+            or not isinstance(self.window_length, (int, np.integer))
+            or self.window_length < 3
+            or self.window_length % 2 == 0
+        ):
+            raise ValueError("window_length must be an odd integer of at least 3")
+        if self.standard_deviation is None:
+            return
+        scale = np.asarray(self.standard_deviation)
+        if (
+            scale.ndim != 1
+            or np.issubdtype(scale.dtype, np.bool_)
+            or not np.issubdtype(scale.dtype, np.number)
+            or not np.all(np.isfinite(scale))
+            or np.any(scale < 0.0)
+        ):
+            raise ValueError(
+                "standard_deviation must be a finite non-negative one-dimensional array"
+            )
 
     def estimate(self, y: npt.NDArray[np.float64], axis: TimeAxis) -> NoiseFit:
         """Estimate the local noise level, or use the supplied one."""
         del axis
-        if self.sigma is not None:
-            scale = np.asarray(self.sigma, dtype=float)
+        if self.standard_deviation is not None:
+            scale = np.asarray(self.standard_deviation, dtype=float)
+            if not np.all(np.isfinite(scale)) or np.any(scale < 0.0):
+                raise ValueError(
+                    "standard_deviation must contain finite non-negative values"
+                )
             if scale.shape != (len(y),):
                 raise ValueError(
-                    f"sigma must have one value per observation "
+                    f"standard_deviation must have one value per observation "
                     f"({len(y)}), got {scale.shape}"
                 )
         else:
-            scale = local_sigma(y, self.window)
+            scale = local_sigma(y, self.window_length)
         return NoiseFit(
-            sigma=float(np.mean(scale)), sigma_vector=scale, scale_is_stated=True
+            standard_deviation=float(np.mean(scale)),
+            standard_deviation_vector=scale,
+            scale_is_stated=True,
+            structure="heteroskedastic",
         )
 
 
@@ -381,13 +568,21 @@ class Given(NoiseModel):
 
     covariance: npt.NDArray[np.float64]
 
+    def __post_init__(self) -> None:
+        """Validate the supplied covariance independently of series length."""
+        _validate_covariance(self.covariance)
+
     def estimate(self, y: npt.NDArray[np.float64], axis: TimeAxis) -> NoiseFit:
         """Return the supplied covariance, checking it matches the series."""
         del axis
-        cov = np.asarray(self.covariance, dtype=float)
+        cov = _validate_covariance(self.covariance)
         if cov.shape != (len(y), len(y)):
             raise ValueError(f"covariance must be {(len(y), len(y))}, got {cov.shape}")
-        return NoiseFit(sigma=float(np.sqrt(np.mean(np.diag(cov)))), explicit=cov)
+        return NoiseFit(
+            standard_deviation=float(np.sqrt(np.mean(np.diag(cov)))),
+            explicit=cov,
+            structure="given",
+        )
 
 
 def resolve_noise(spec: NoiseModel | str | None) -> NoiseModel:

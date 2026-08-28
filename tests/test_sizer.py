@@ -13,8 +13,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from incline.process import StateSpace
 from incline.sizer import SiZer, SiZerMap, sizer_analysis, trend_with_sizer
-from incline.smoothers import InterpolatingSpline, LocalPolynomial, SavitzkyGolay
+from incline.smoothers import LocalPolynomial, Loess, NaiveDifference, SavitzkyGolay
 
 N = 120
 
@@ -34,9 +35,16 @@ def test_sweep_returns_a_populated_map():
     result = sizer_analysis(series(), n_scales=8)
     assert isinstance(result, SiZerMap)
     assert result.significance.shape == (8, N)
-    assert result.derivative.shape == result.se.shape == (8, N)
+    assert result.derivative.shape == result.standard_error.shape == (8, N)
     assert set(np.unique(result.significance)) <= {-1, 0, 1}
     assert np.all(np.diff(result.scales) > 0)
+
+
+@pytest.mark.parametrize("smoother", [NaiveDifference(), StateSpace()])
+def test_sweep_refuses_an_estimator_without_a_scale_knob(smoother):
+    """A scale map cannot repeat one unchanged fit under several labels."""
+    with pytest.raises(ValueError, match="no smoothing scale"):
+        SiZer(smoother=smoother, n_scales=3, simultaneous=False).fit(series())
 
 
 def test_map_renders_as_a_long_frame():
@@ -46,7 +54,7 @@ def test_map_renders_as_a_long_frame():
         "x",
         "scale",
         "derivative",
-        "derivative_se",
+        "derivative_standard_error",
         "significance",
     ]
     assert len(frame) == 5 * N
@@ -56,7 +64,7 @@ def test_map_renders_as_a_long_frame():
     "smoother",
     [
         pytest.param(LocalPolynomial(degree=2), id="local_poly"),
-        pytest.param(SavitzkyGolay(polyorder=3), id="sgolay"),
+        pytest.param(SavitzkyGolay(degree=3), id="sgolay"),
     ],
 )
 @pytest.mark.parametrize("simultaneous", [False, True])
@@ -93,13 +101,22 @@ def test_whole_curve_band_is_stricter_than_pointwise():
     assert (whole.significance != 0).sum() <= (pointwise.significance != 0).sum()
 
 
-def test_bootstrapped_smoother_reports_pointwise_rather_than_pretending():
-    """A whole-curve band needs an exact operator; saying so beats faking it."""
-    with pytest.warns(UserWarning, match="whole-curve"):
-        result = SiZer(
-            smoother=InterpolatingSpline(), n_scales=3, simultaneous=True
+def test_bootstrapped_smoother_refuses_an_unavailable_simultaneous_band():
+    """A requested correction must not silently change to pointwise inference."""
+    with pytest.raises(ValueError, match="simultaneous"):
+        SiZer(smoother=Loess(), n_scales=3, simultaneous=True).fit(series())
+
+
+def test_native_smoother_refuses_an_unavailable_simultaneous_band():
+    """SiZer must not turn an incompatible request into an all-blank map."""
+    from incline import GaussianProcess
+
+    with pytest.raises(ValueError, match="simultaneous"):
+        SiZer(
+            smoother=GaussianProcess(optimize=False, n_restarts=0),
+            n_scales=3,
+            simultaneous=True,
         ).fit(series())
-    assert result.simultaneous is False
 
 
 def test_persistent_regions_require_agreement_across_scales():
@@ -148,14 +165,57 @@ def test_trend_with_sizer_attaches_persistence_columns():
     result = trend_with_sizer(series(trend=True), n_scales=6)
     for column in (
         "derivative_value",
-        "derivative_se",
-        "se_method",
+        "derivative_standard_error",
+        "uncertainty_method",
         "sizer_significance",
         "persistent_increasing",
         "persistent_decreasing",
     ):
         assert column in result.columns
     assert len(result) == N
+
+
+def test_trend_with_sizer_uses_one_uncertainty_configuration():
+    """The displayed trend and scale map must use the same requested noise model."""
+    from incline.api import estimate
+
+    data = series(trend=True)
+    smoother = SavitzkyGolay(window_length=15)
+    result = trend_with_sizer(
+        data,
+        smoother=smoother,
+        n_scales=3,
+        noise="ar1",
+        simultaneous=False,
+        confidence_level=0.9,
+        random_state=7,
+    )
+    expected = estimate(
+        smoother,
+        data,
+        with_uncertainty=True,
+        noise="ar1",
+        simultaneous=False,
+        confidence_level=0.9,
+        random_state=7,
+    )
+    np.testing.assert_allclose(
+        result["derivative_standard_error"], expected.standard_error
+    )
+
+
+def test_bootstrapped_sizer_is_reproducible_from_one_random_state():
+    """One public seed must control every bootstrap in the scale sweep."""
+    config = SiZer(
+        smoother=Loess(),
+        n_scales=2,
+        simultaneous=False,
+        n_bootstrap=10,
+        random_state=17,
+    )
+    first = config.fit(series())
+    second = config.fit(series())
+    np.testing.assert_array_equal(first.standard_error, second.standard_error)
 
 
 def test_plot_returns_a_figure():
@@ -167,6 +227,14 @@ def test_plot_returns_a_figure():
     figure = sizer_analysis(series(), n_scales=4).plot()
     assert figure is not None
     plt.close(figure)
+
+
+@pytest.mark.parametrize("figsize", [(0, 8), (12, np.inf), ("wide", 8)])
+def test_plot_rejects_invalid_figure_sizes(figsize):
+    """Matplotlib should not be the first layer to diagnose an invalid size."""
+    result = sizer_analysis(series(), n_scales=4)
+    with pytest.raises(ValueError, match="figsize"):
+        result.plot(figsize=figsize)
 
 
 def test_missing_values_are_refused_rather_than_silently_swept():

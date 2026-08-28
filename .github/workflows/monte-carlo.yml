@@ -52,8 +52,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: monte-carlo-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deep-tier:
+    name: Deep Monte Carlo
     runs-on: ubuntu-latest
     # Skipped rather than absent on an unlabeled pull request, so the check is
     # visibly not-run instead of silently missing.
