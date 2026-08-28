@@ -25,7 +25,8 @@ deprecated aliases.
 
 - Reimplemented L1 trend filtering from the published convex formulation,
   including divided differences for irregular grids and the exact maximum
-  penalty used by `penalty_fraction`.
+  penalty used by `penalty_fraction`; at and above that endpoint the
+  polynomial projection is computed analytically.
 - Made smoothing-spline tuning covariance-aware and routed adaptive fits to
   bootstrap uncertainty while retaining operator propagation for fixed
   penalties.

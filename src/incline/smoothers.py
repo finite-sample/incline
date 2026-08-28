@@ -1628,6 +1628,11 @@ class L1TrendFilter(Smoother):
         optimality = 0.0
         if penalty == 0 or maximum_penalty == 0:
             trend = y.copy()
+        elif penalty >= maximum_penalty:
+            dual_unconstrained = np.linalg.solve(
+                differences @ differences.T, differences @ y
+            )
+            trend = y - differences.T @ dual_unconstrained
         else:
             solved = lsq_linear(
                 differences.T,

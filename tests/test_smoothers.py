@@ -398,7 +398,7 @@ def test_zero_l1_penalty_returns_the_observations_exactly():
 
 
 def test_unit_l1_penalty_fraction_reaches_the_polynomial_null_space():
-    """The normalized endpoint is the theoretical saturation threshold."""
+    """The saturation endpoint is analytic, not optimizer-tolerance dependent."""
     x = np.array([0.0, 0.4, 1.1, 2.0, 3.7, 4.0, 6.2, 9.0])
     axis = TimeAxis(x=x, delta=float(np.median(np.diff(x))), unit="index")
     y = np.array([0.2, -0.1, 0.4, 1.2, 0.9, 1.8, 2.0, 1.7])
@@ -410,6 +410,13 @@ def test_unit_l1_penalty_fraction_reaches_the_polynomial_null_space():
     assert estimate.provenance.params["resolved_penalty"] == pytest.approx(
         estimate.provenance.params["maximum_penalty"]
     )
+    assert estimate.provenance.params["optimizer_iterations"] == 0
+
+    above_endpoint = L1TrendFilter(
+        penalty=2 * estimate.provenance.params["maximum_penalty"]
+    ).fit(axis, y)
+    np.testing.assert_allclose(above_endpoint.values, linear_projection, atol=2e-8)
+    assert above_endpoint.provenance.params["optimizer_iterations"] == 0
 
 
 def test_absolute_l1_penalty_has_no_fake_normalized_scale():
