@@ -132,6 +132,35 @@ def _study(name: str, reps: int, seed0: int):
     return estimates, errors, lower, upper
 
 
+def _expected_derivative(name: str, reps: int, seed0: int) -> float:
+    """Estimate the smoother's expectation from independent point fits.
+
+    The expectation is a target for a separate bootstrap interval study. It
+    needs independent noisy datasets, but not bootstrap intervals of its own.
+
+    Args:
+        name: Registered smoother name.
+        reps: Independent point-estimate replicates.
+        seed0: First seed.
+
+    Returns:
+        Mean derivative estimate at ``POINT``.
+    """
+    estimates = np.empty(reps)
+    for i in range(reps):
+        rng = np.random.default_rng(seed0 + i)
+        smoother = (
+            build(name, penalty_fraction=0.2) if name == "l1_filter" else build(name)
+        )
+        fitted = smoother.fit(
+            AXIS,
+            SMOOTH + NoiseGenerator.white(N, SIGMA, rng),
+            derivative_order=1,
+        )
+        estimates[i] = fitted.derivative[POINT]
+    return float(estimates.mean())
+
+
 @pytest.fixture(scope="module")
 def studies():
     """One study per smoother, reused across the tests that share it.
@@ -145,6 +174,24 @@ def studies():
         key = (name, reps, seed0)
         if key not in cache:
             cache[key] = _study(name, reps, seed0)
+        return cache[key]
+
+    return get
+
+
+@pytest.fixture(scope="module")
+def expectations():
+    """Cache independently estimated point-estimator expectations.
+
+    Returns:
+        Callable taking ``(name, reps)`` and returning the expected derivative.
+    """
+    cache: dict[tuple[str, int, int], float] = {}
+
+    def get(name: str, reps: int, seed0: int = 90000) -> float:
+        key = (name, reps, seed0)
+        if key not in cache:
+            cache[key] = _expected_derivative(name, reps, seed0)
         return cache[key]
 
     return get
@@ -204,7 +251,9 @@ def test_the_bootstrap_standard_error_matches_the_estimators_spread(
 
 @pytest.mark.parametrize("name", BOOTSTRAP_SMOOTHERS)
 @pytest.mark.parametrize("reps", TIERS)
-def test_the_interval_covers_the_value_it_is_centred_on(name, reps, studies):
+def test_the_interval_covers_the_value_it_is_centred_on(
+    name, reps, studies, expectations
+):
     """Coverage of E[f-hat], which isolates construction from bias.
 
     An adaptive smoother is biased wherever the truth has a feature it must
@@ -223,10 +272,10 @@ def test_the_interval_covers_the_value_it_is_centred_on(name, reps, studies):
         name: Smoother under test.
         reps: Replicates for this tier.
         studies: Cached-study fixture.
+        expectations: Independently estimated point-estimator expectations.
     """
     _, _, lower, upper = studies(name, reps)
-    independent, _, _, _ = studies(name, reps, seed0=90000)
-    pseudo_truth = independent[:, POINT].mean()
+    pseudo_truth = expectations(name, reps)
 
     covered = (lower[:, POINT] <= pseudo_truth) & (pseudo_truth <= upper[:, POINT])
     band = binomial_band(0.95, reps)

@@ -65,11 +65,9 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'deep-tier')
-    # 26 minutes locally, 43 on a shared runner for 44 tests -- which left
-    # 2.5 minutes under the old 45-minute cap, and the 9 bootstrap studies
-    # added in c9b6e94 spent it: the first run at 53 tests was killed at
-    # 45m15s mid-pytest. Sized for roughly double the current tier so adding
-    # a study does not silently turn this red again.
+    # Nested bootstrap studies are substantially slower on shared runners than
+    # on a development machine. Leave enough room for the complete calibrated
+    # tier without reducing its replicate counts or silently skipping studies.
     timeout-minutes: 90
 
     env:
