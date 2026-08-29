@@ -51,10 +51,13 @@ def sampling_behaviour(smoother, n, reps, sigma=SIGMA, seed=3, frequency=3.0):
     reported = np.empty(reps)
     for i in range(reps):
         fitted = smoother.fit(
-            axis, truth + NoiseGenerator.white(n, sigma, rng), order=1, se=True
+            axis,
+            truth + NoiseGenerator.white(n, sigma, rng),
+            derivative_order=1,
+            with_uncertainty=True,
         )
         estimates[i] = fitted.derivative[point]
-        reported[i] = fitted.se[point]
+        reported[i] = fitted.standard_error[point]
 
     bias = float(estimates.mean() - true_slope[point])
     spread = float(estimates.std())

@@ -6,21 +6,10 @@ distinguishable from zero. Features that persist across many scales are real;
 features that appear at one scale and vanish at the next are artifacts of that
 scale.
 
-This module does not compute standard errors, and that is the point of it.
-
-The previous implementation carried four separate variance formulas, one per
-smoothing method, and its own module docstring documented three of them as
-broken: LOESS standard errors 2-23x too large (so it flagged nothing), spline
-standard errors roughly 10x too small *and increasing with bandwidth*, which is
-backwards (so it flagged about 90% of pure noise as trending), and a Gaussian
-process branch that back-solved a standard error out of an interval width. Only
-the local-polynomial sandwich was calibrated.
-
-None of them are fixed here; all of them are gone. SiZer now sweeps
-:meth:`~incline.smoothers.Smoother.with_scale` over any smoother and asks that
-smoother for its uncertainty, so the significance map is exactly as trustworthy
-as the estimator underneath it -- and every one of those has been measured
-against Monte Carlo in ``tests/test_econometrics.py``.
+SiZer sweeps :meth:`~incline.smoothers.Smoother.with_scale` and asks each fitted
+smoother for its own uncertainty. The map therefore uses the same uncertainty
+model as the underlying estimator rather than maintaining separate variance
+formulas for each smoothing method.
 """
 
 from __future__ import annotations
@@ -55,7 +44,7 @@ class SiZerMap:
         axis: The time axis every scale shares.
         scales: Smoothing scales, ascending, as fractions of the series span.
         derivative: Slope estimates, shape (n_scales, n_points).
-        se: Standard errors, same shape.
+        standard_error: Standard errors, same shape.
         significance: -1, 0 or +1 per cell, same shape.
         confidence_level: Confidence level behind the flags.
         simultaneous: Whether each row's flags carry a whole-curve correction.
@@ -65,18 +54,73 @@ class SiZerMap:
     axis: TimeAxis
     scales: npt.NDArray[np.float64]
     derivative: npt.NDArray[np.float64]
-    se: npt.NDArray[np.float64]
+    standard_error: npt.NDArray[np.float64]
     significance: npt.NDArray[np.int_]
     confidence_level: float
     simultaneous: bool
     smoother_name: str
+
+    def __post_init__(self) -> None:
+        """Validate the scale-by-position result arrays and metadata."""
+        scales = np.asarray(self.scales, dtype=np.float64)
+        if (
+            scales.ndim != 1
+            or scales.size == 0
+            or not np.all(np.isfinite(scales))
+            or np.any(scales <= 0)
+            or np.any(scales > 1)
+            or np.any(np.diff(scales) <= 0)
+        ):
+            raise ValueError(
+                "scales must be a nonempty, strictly increasing vector in (0, 1]"
+            )
+        expected_shape = (len(scales), self.axis.n)
+        derivative = np.asarray(self.derivative, dtype=np.float64)
+        standard_error = np.asarray(self.standard_error, dtype=np.float64)
+        significance = np.asarray(self.significance)
+        for name, array in (
+            ("derivative", derivative),
+            ("standard_error", standard_error),
+            ("significance", significance),
+        ):
+            if array.shape != expected_shape:
+                raise ValueError(
+                    f"{name} must have shape {expected_shape}, got {array.shape}"
+                )
+        if np.any(np.isinf(derivative)):
+            raise ValueError("derivative cannot contain infinite values")
+        if np.any(np.isinf(standard_error)) or np.any(
+            standard_error[np.isfinite(standard_error)] < 0
+        ):
+            raise ValueError("standard_error must be nonnegative and not infinite")
+        if not np.all(np.isin(significance, (DECREASING, INSIGNIFICANT, INCREASING))):
+            raise ValueError("significance values must be -1, 0 or 1")
+        if (
+            isinstance(self.confidence_level, (bool, np.bool_))
+            or not isinstance(
+                self.confidence_level, (int, float, np.integer, np.floating)
+            )
+            or not np.isfinite(self.confidence_level)
+            or not 0.0 < self.confidence_level < 1.0
+        ):
+            raise ValueError(
+                "confidence_level must be finite and strictly between 0 and 1"
+            )
+        if not isinstance(self.simultaneous, (bool, np.bool_)):
+            raise ValueError("simultaneous must be boolean")
+        if not isinstance(self.smoother_name, str) or not self.smoother_name:
+            raise ValueError("smoother_name must be a nonempty string")
+        object.__setattr__(self, "scales", scales)
+        object.__setattr__(self, "derivative", derivative)
+        object.__setattr__(self, "standard_error", standard_error)
+        object.__setattr__(self, "significance", significance.astype(int))
 
     def to_frame(self) -> pd.DataFrame:
         """Render the sweep as one row per (scale, point).
 
         Returns:
             Long-format frame with ``x``, ``scale``, ``derivative``,
-            ``derivative_se`` and ``significance``.
+            ``derivative_standard_error`` and ``significance``.
         """
         n_scales, n_points = self.derivative.shape
         return pd.DataFrame(
@@ -84,7 +128,7 @@ class SiZerMap:
                 "x": np.tile(self.axis.x, n_scales),
                 "scale": np.repeat(self.scales, n_points),
                 "derivative": self.derivative.ravel(),
-                "derivative_se": self.se.ravel(),
+                "derivative_standard_error": self.standard_error.ravel(),
                 "significance": self.significance.ravel(),
             }
         )
@@ -102,7 +146,16 @@ class SiZerMap:
 
         Returns:
             ``{'increasing': [(start, end), ...], 'decreasing': [...]}``.
+
+        Raises:
+            ValueError: If ``min_persistence`` is not a positive integer.
         """
+        if (
+            isinstance(min_persistence, (bool, np.bool_))
+            or not isinstance(min_persistence, (int, np.integer))
+            or min_persistence < 1
+        ):
+            raise ValueError("min_persistence must be a positive integer")
         regions: dict[str, list[tuple[float, float]]] = {
             "increasing": [],
             "decreasing": [],
@@ -136,7 +189,17 @@ class SiZerMap:
 
         Raises:
             ImportError: If matplotlib is unavailable.
+            ValueError: If ``figsize`` is not a positive finite pair or
+                ``title`` is not a string or None.
         """
+        try:
+            size = np.asarray(figsize, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("figsize must be a positive finite pair") from exc
+        if size.shape != (2,) or not np.all(np.isfinite(size)) or np.any(size <= 0):
+            raise ValueError("figsize must be a positive finite pair")
+        if title is not None and not isinstance(title, str):
+            raise ValueError("title must be a string or None")
         try:
             import matplotlib.colors as mcolors
             import matplotlib.pyplot as plt
@@ -211,11 +274,13 @@ def _contiguous_spans(
 
 @dataclass(frozen=True)
 class SiZer:
-    """A scale sweep over any smoother.
+    """A scale sweep over a smoother with an explicit scale knob.
 
     Attributes:
-        smoother: The estimator to sweep. Its uncertainty machinery is what the
-            map rests on, so prefer one with an exact operator.
+        smoother: The estimator to sweep. It must implement a real smoothing
+            scale; naive differencing and state-space models do not. Its
+            uncertainty machinery is what the map rests on, so prefer one with
+            an exact operator.
         scales: Explicit scales. Generated log-spaced when None.
         n_scales: How many scales to generate.
         scale_range: Smallest and largest scale, as fractions of the span.
@@ -223,6 +288,8 @@ class SiZer:
         noise: Noise model passed to the smoother, or ``'iid'`` / ``'ar1'``.
         simultaneous: Ask for a whole-curve band at each scale rather than
             pointwise intervals. See the note on multiplicity below.
+        n_bootstrap: Bootstrap replicates for nonlinear smoothers.
+        random_state: Seed or Generator controlling every bootstrap in the sweep.
 
     Note:
         With ``simultaneous=True`` each *row* of the map is corrected for
@@ -233,9 +300,9 @@ class SiZer:
         confidence; reading persistence across scales, which is what
         :meth:`SiZerMap.significant_regions` does, is the intended use.
 
-        Only smoothers with an exact operator support the whole-curve band. For
-        a bootstrapped smoother the request is dropped and the map records
-        ``simultaneous=False`` rather than claiming a correction it did not make.
+        Only smoothers with an exact operator support the whole-curve band.
+        Requesting one from another smoother raises rather than silently
+        changing the inferential target.
     """
 
     smoother: Smoother = field(default_factory=lambda: LocalPolynomial(degree=2))
@@ -245,6 +312,58 @@ class SiZer:
     confidence_level: float = 0.95
     noise: NoiseModel | str | None = None
     simultaneous: bool = True
+    n_bootstrap: int = 200
+    random_state: int | np.random.Generator | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the scale grid and uncertainty configuration."""
+        if (
+            isinstance(self.n_scales, (bool, np.bool_))
+            or not isinstance(self.n_scales, (int, np.integer))
+            or self.n_scales < 1
+        ):
+            raise ValueError("n_scales must be a positive integer")
+        if (
+            not isinstance(self.scale_range, tuple)
+            or len(self.scale_range) != 2
+            or not np.all(np.isfinite(self.scale_range))
+            or not 0.0 < self.scale_range[0] < self.scale_range[1] <= 1.0
+        ):
+            raise ValueError("scale_range must be an increasing pair inside (0, 1]")
+        if self.scales is not None:
+            scales = np.asarray(self.scales)
+            if (
+                scales.ndim != 1
+                or scales.size == 0
+                or not np.issubdtype(scales.dtype, np.number)
+                or not np.all(np.isfinite(scales))
+                or np.any(scales <= 0)
+                or np.any(scales > 1)
+                or np.any(np.diff(scales) <= 0)
+            ):
+                raise ValueError(
+                    "scales must be a nonempty, strictly increasing "
+                    "one-dimensional sequence inside (0, 1]"
+                )
+        if (
+            isinstance(self.confidence_level, (bool, np.bool_))
+            or not isinstance(
+                self.confidence_level, (int, float, np.integer, np.floating)
+            )
+            or not np.isfinite(self.confidence_level)
+            or not 0.0 < self.confidence_level < 1.0
+        ):
+            raise ValueError(
+                "confidence_level must be finite and strictly between 0 and 1"
+            )
+        if (
+            isinstance(self.n_bootstrap, (bool, np.bool_))
+            or not isinstance(self.n_bootstrap, (int, np.integer))
+            or self.n_bootstrap < 2
+        ):
+            raise ValueError("n_bootstrap must be an integer of at least 2")
+        if not isinstance(self.simultaneous, (bool, np.bool_)):
+            raise ValueError("simultaneous must be boolean")
 
     def _scale_grid(self, n_points: int) -> npt.NDArray[np.float64]:
         """Log-spaced scales, clipped to what the sample can support."""
@@ -261,23 +380,24 @@ class SiZer:
     def fit(
         self,
         df: pd.DataFrame,
-        column_value: str = "value",
+        value_column: str = "value",
         time_column: str | None = None,
     ) -> SiZerMap:
         """Sweep the smoother across scales.
 
         Args:
             df: Time series data.
-            column_value: Column holding the values.
+            value_column: Column holding the values.
             time_column: Numeric time column; the index is used when None.
 
         Returns:
             The assembled map.
 
         Raises:
-            ValueError: If fewer than five usable observations remain.
+            ValueError: If fewer than five usable observations remain or the
+                smoother has no scale knob.
         """
-        y = np.asarray(df[column_value], dtype=np.float64)
+        y = np.asarray(df[value_column], dtype=np.float64)
         axis = TimeAxis.from_frame(df, time_column)
 
         usable = np.isfinite(y)
@@ -296,11 +416,28 @@ class SiZer:
                 f"interpolate or drop {'it' if gaps == 1 else 'them'} first."
             )
 
+        if self.smoother.has_native_posterior:
+            if self.noise is not None:
+                raise ValueError(
+                    f"{self.smoother.name} carries its own posterior; "
+                    "noise is unavailable"
+                )
+            if self.simultaneous:
+                raise ValueError(
+                    f"{self.smoother.name} has no simultaneous whole-curve "
+                    "posterior band"
+                )
+        elif self.simultaneous and not self.smoother.is_linear:
+            raise ValueError(
+                f"{self.smoother.name} has no simultaneous whole-curve band; "
+                "set simultaneous=False"
+            )
+
         scales = self._scale_grid(axis.n)
         derivative = np.full((len(scales), axis.n), np.nan)
         standard_error = np.full((len(scales), axis.n), np.nan)
         significance = np.zeros((len(scales), axis.n), dtype=int)
-        achieved_simultaneous = self.simultaneous
+        rng = np.random.default_rng(self.random_state)
 
         for row, scale in enumerate(scales):
             smoother = self.smoother.with_scale(float(scale), axis)
@@ -308,11 +445,13 @@ class SiZer:
                 estimate = smoother.fit(
                     axis,
                     y,
-                    order=1,
-                    se=True,
+                    derivative_order=1,
+                    with_uncertainty=True,
                     noise=self.noise,
                     simultaneous=self.simultaneous,
                     confidence_level=self.confidence_level,
+                    n_bootstrap=self.n_bootstrap,
+                    random_state=rng,
                 )
             except Exception as exc:  # a bad scale must not lose the sweep
                 warnings.warn(
@@ -322,39 +461,29 @@ class SiZer:
                 continue
 
             derivative[row] = estimate.derivative
-            if estimate.se is not None:
-                standard_error[row] = estimate.se
+            if estimate.standard_error is not None:
+                standard_error[row] = estimate.standard_error
             # The smoother already decided what excludes zero, at whichever
             # band width was asked for. Sign it and store.
             flagged = estimate.significant
             significance[row] = np.where(
                 flagged, np.sign(estimate.derivative).astype(int), INSIGNIFICANT
             )
-            if self.simultaneous and not estimate.provenance.simultaneous:
-                achieved_simultaneous = False
-
-        if self.simultaneous and not achieved_simultaneous:
-            warnings.warn(
-                f"{self.smoother.name} has no exact operator, so a whole-curve "
-                f"band is unavailable; the map is pointwise.",
-                stacklevel=2,
-            )
-
         return SiZerMap(
             axis=axis,
             scales=scales,
             derivative=derivative,
-            se=standard_error,
+            standard_error=standard_error,
             significance=significance,
             confidence_level=self.confidence_level,
-            simultaneous=achieved_simultaneous,
+            simultaneous=self.simultaneous,
             smoother_name=self.smoother.name,
         )
 
 
 def sizer_analysis(
     df: pd.DataFrame,
-    column_value: str = "value",
+    value_column: str = "value",
     time_column: str | None = None,
     smoother: Smoother | None = None,
     **kwargs: Any,
@@ -363,7 +492,7 @@ def sizer_analysis(
 
     Args:
         df: Time series data.
-        column_value: Column holding the values.
+        value_column: Column holding the values.
         time_column: Numeric time column.
         smoother: Estimator to sweep; local polynomial by default.
         **kwargs: Passed to :class:`SiZer`.
@@ -372,26 +501,41 @@ def sizer_analysis(
         The assembled map.
     """
     config = SiZer(smoother=smoother or LocalPolynomial(degree=2), **kwargs)
-    return config.fit(df, column_value, time_column)
+    return config.fit(df, value_column, time_column)
 
 
 def trend_with_sizer(
     df: pd.DataFrame,
-    column_value: str = "value",
+    value_column: str = "value",
     time_column: str | None = None,
     smoother: Smoother | None = None,
     min_persistence: int = 3,
-    **kwargs: Any,
+    *,
+    scales: npt.NDArray[np.float64] | None = None,
+    n_scales: int = 20,
+    scale_range: tuple[float, float] = (0.02, 0.5),
+    confidence_level: float = 0.95,
+    noise: NoiseModel | str | None = None,
+    simultaneous: bool = True,
+    n_bootstrap: int = 200,
+    random_state: int | np.random.Generator | None = None,
 ) -> pd.DataFrame:
     """Estimate a trend and mark where it survives a scale sweep.
 
     Args:
         df: Time series data.
-        column_value: Column holding the values.
+        value_column: Column holding the values.
         time_column: Numeric time column.
         smoother: Estimator used for both the trend and the sweep.
         min_persistence: Consecutive scales required to call a feature real.
-        **kwargs: Passed to :class:`SiZer`.
+        scales: Explicit smoothing scales, or None to generate them.
+        n_scales: Number of generated scales.
+        scale_range: Lower and upper generated scales.
+        confidence_level: Confidence level for both the trend and the map.
+        noise: Noise model used by both the trend and the map.
+        simultaneous: Whether both requests use whole-curve bands.
+        n_bootstrap: Bootstrap replicates for nonlinear smoothers.
+        random_state: Seed or Generator controlling all bootstrap draws.
 
     Returns:
         The estimator's usual columns plus ``sizer_significance``,
@@ -400,9 +544,30 @@ def trend_with_sizer(
     from .api import estimate
 
     chosen = smoother or LocalPolynomial(degree=2)
-    result = estimate(chosen, df, column_value, time_column, se=True).to_frame(df)
+    result = estimate(
+        chosen,
+        df,
+        value_column,
+        time_column,
+        with_uncertainty=True,
+        noise=noise,
+        simultaneous=simultaneous,
+        confidence_level=confidence_level,
+        n_bootstrap=n_bootstrap,
+        random_state=random_state,
+    ).to_frame(df)
 
-    sizer_map = SiZer(smoother=chosen, **kwargs).fit(df, column_value, time_column)
+    sizer_map = SiZer(
+        smoother=chosen,
+        scales=scales,
+        n_scales=n_scales,
+        scale_range=scale_range,
+        confidence_level=confidence_level,
+        noise=noise,
+        simultaneous=simultaneous,
+        n_bootstrap=n_bootstrap,
+        random_state=random_state,
+    ).fit(df, value_column, time_column)
     middle = len(sizer_map.scales) // 2
     result["sizer_significance"] = sizer_map.significance[middle]
 

@@ -24,19 +24,21 @@ AXIS = TimeAxis.positional(N)
 EXPECTED_COLUMNS = [
     "id",
     "trend",
-    "trend_se",
+    "trend_standard_error",
     "ci_lower",
     "ci_upper",
     "significant",
-    "se_exact",
+    "uncertainty_exact",
     "rank",
 ]
 
 
-def estimate_for(slope: float, seed: int = 0, se: bool = True):
+def estimate_for(slope: float, seed: int = 0, with_uncertainty: bool = True):
     """A fitted estimate for a series with the given slope."""
     y = slope * AXIS.x + np.random.default_rng(seed).normal(0, 0.3, N)
-    return SavitzkyGolay(window_length=15).fit(AXIS, y, order=1, se=se)
+    return SavitzkyGolay(window_length=15).fit(
+        AXIS, y, derivative_order=1, with_uncertainty=with_uncertainty
+    )
 
 
 def test_ranks_strongest_trend_first():
@@ -72,23 +74,25 @@ def test_empty_and_populated_paths_agree_on_the_schema():
 
 def test_standard_errors_are_propagated_not_discarded():
     """Uncertainty computed upstream must survive the aggregation."""
-    result = trending({"a": estimate_for(0.2)}, how="mean")
-    assert np.isfinite(result["trend_se"].iloc[0])
+    result = trending({"a": estimate_for(0.2)}, aggregation="mean")
+    assert np.isfinite(result["trend_standard_error"].iloc[0])
     assert result["ci_lower"].iloc[0] < result["trend"].iloc[0]
     assert result["trend"].iloc[0] < result["ci_upper"].iloc[0]
 
 
 def test_missing_standard_errors_are_reported_as_missing():
-    """Without se=True upstream there is nothing to propagate, and no pretending."""
-    result = trending({"a": estimate_for(0.2, se=False)})
-    assert np.isnan(result["trend_se"].iloc[0])
+    """Missing upstream uncertainty remains missing."""
+    result = trending({"a": estimate_for(0.2, with_uncertainty=False)})
+    assert np.isnan(result["trend_standard_error"].iloc[0])
     assert not result["significant"].iloc[0]
 
 
 def test_a_flat_series_is_not_called_significant():
     """Noise around zero slope must not clear its own error bar."""
     y = np.random.default_rng(7).normal(0, 0.3, N)
-    flat = SavitzkyGolay(window_length=21).fit(AXIS, y, order=1, se=True)
+    flat = SavitzkyGolay(window_length=21).fit(
+        AXIS, y, derivative_order=1, with_uncertainty=True
+    )
     assert not trending({"flat": flat})["significant"].iloc[0]
 
 
@@ -100,7 +104,7 @@ def test_a_strong_trend_is_called_significant():
 @pytest.mark.parametrize("how", ["mean", "max", "median", "last"])
 def test_every_aggregation_produces_the_same_schema(how):
     """Which summary you pick must not change what you have to index."""
-    result = trending({"a": estimate_for(0.2), "b": estimate_for(0.4)}, how=how)
+    result = trending({"a": estimate_for(0.2), "b": estimate_for(0.4)}, aggregation=how)
     assert list(result.columns) == EXPECTED_COLUMNS
     assert len(result) == 2
 
@@ -108,7 +112,7 @@ def test_every_aggregation_produces_the_same_schema(how):
 def test_unknown_aggregation_is_refused():
     """A typo must not silently pick a default summary."""
     with pytest.raises(ValueError, match="Unknown aggregation"):
-        trending({"a": estimate_for(0.1)}, how="average")
+        trending({"a": estimate_for(0.1)}, aggregation="average")
 
 
 def test_unknown_weighting_is_refused():
@@ -124,12 +128,18 @@ def test_weighting_actually_changes_the_answer():
     weight, so the scheme was silently ignored on that path.
     """
     y = np.linspace(0, 5, N) ** 2
-    estimate = SavitzkyGolay(window_length=15).fit(AXIS, y, order=1, se=True)
+    estimate = SavitzkyGolay(window_length=15).fit(
+        AXIS, y, derivative_order=1, with_uncertainty=True
+    )
     values = {
         scheme: float(
-            trending({"a": estimate}, k=10, how="mean", weighting=scheme)["trend"].iloc[
-                0
-            ]
+            trending(
+                {"a": estimate},
+                window_length=10,
+                aggregation="mean",
+                weighting=scheme,
+                half_life=3 if scheme == "exponential" else None,
+            )["trend"].iloc[0]
         )
         for scheme in ("uniform", "linear", "exponential")
     }
@@ -143,17 +153,62 @@ def test_mean_uncertainty_is_conservative_rather_than_naive():
     small. It must therefore exceed what an independence assumption would give.
     """
     estimate = estimate_for(0.2)
-    result = trending({"a": estimate}, k=10, how="mean")
-    tail = estimate.se[-10:]
+    result = trending({"a": estimate}, window_length=10, aggregation="mean")
+    tail = estimate.standard_error[-10:]
     naive_independent = float(np.sqrt(np.sum((tail / 10) ** 2)))
-    assert result["trend_se"].iloc[0] > naive_independent
+    assert result["trend_standard_error"].iloc[0] > naive_independent
 
 
-def test_se_exact_flags_which_summaries_propagate_exactly():
-    """max is not a linear functional, so its error bar is only indicative."""
+def test_uncertainty_exact_flags_which_summaries_propagate_exactly():
+    """Only summaries with valid propagation may report exact uncertainty."""
     estimate = estimate_for(0.2)
-    assert not trending({"a": estimate}, how="max")["se_exact"].iloc[0]
-    assert trending({"a": estimate}, how="last")["se_exact"].iloc[0]
+    assert not trending({"a": estimate}, aggregation="max")["uncertainty_exact"].iloc[0]
+    assert not trending({"a": estimate}, aggregation="mean")["uncertainty_exact"].iloc[
+        0
+    ]
+    assert trending({"a": estimate}, aggregation="last")["uncertainty_exact"].iloc[0]
+
+
+def test_zero_standard_error_is_not_called_significant():
+    """Zero estimated noise is absence of evidence, not infinite precision."""
+    estimate = estimate_for(1.0)
+    derivative = estimate.derivative.copy()
+    zero_error = dataclasses.replace(
+        estimate,
+        standard_error=np.zeros(N),
+        ci_lower=derivative,
+        ci_upper=derivative,
+    )
+    row = trending({"exact_line": zero_error}, aggregation="last").iloc[0]
+    assert row["trend_standard_error"] == 0.0
+    assert not row["significant"]
+
+
+@pytest.mark.parametrize("aggregation", ["max", "median"])
+def test_nonlinear_summaries_do_not_report_invalid_inference(aggregation):
+    """Selected maxima and medians need joint inference, not pointwise errors."""
+    row = trending({"a": estimate_for(0.2)}, aggregation=aggregation).iloc[0]
+    assert np.isnan(row["trend_standard_error"])
+    assert np.isnan(row["ci_lower"])
+    assert np.isnan(row["ci_upper"])
+    assert not row["significant"]
+
+
+@pytest.mark.parametrize("half_life", [None, 0, -1, np.nan, np.inf, True])
+def test_exponential_weighting_requires_a_positive_half_life(half_life):
+    """Exponential weighting has no hidden decay constant."""
+    with pytest.raises(ValueError, match="half_life"):
+        trending(
+            {"a": estimate_for(0.2)},
+            weighting="exponential",
+            half_life=half_life,
+        )
+
+
+def test_half_life_is_rejected_when_weighting_does_not_use_it():
+    """An irrelevant argument must not be silently ignored."""
+    with pytest.raises(ValueError, match="half_life"):
+        trending({"a": estimate_for(0.2)}, weighting="uniform", half_life=3)
 
 
 def test_sequence_input_gets_positional_ids():
@@ -177,7 +232,7 @@ def test_mismatched_id_count_is_refused():
 
 def test_window_longer_than_the_series_is_clamped():
     """Asking for more history than exists must not raise."""
-    result = trending({"a": estimate_for(0.2)}, k=10_000)
+    result = trending({"a": estimate_for(0.2)}, window_length=10_000)
     assert np.isfinite(result["trend"].iloc[0])
 
 

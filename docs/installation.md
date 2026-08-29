@@ -2,11 +2,8 @@
 
 ## Requirements
 
-incline requires Python 3.8 or later and the following packages:
-
-- pandas >= 1.0.0
-- numpy >= 1.18.0
-- scipy >= 1.4.0
+incline requires Python 3.12 or later. Package installers resolve its runtime
+dependencies from `pyproject.toml`.
 
 ## Install from PyPI
 
@@ -33,10 +30,11 @@ If you want to contribute to incline or modify the source code:
 ```bash
 git clone https://github.com/finite-sample/incline.git
 cd incline
-pip install -e .[dev,test]
+uv sync --all-groups
 ```
 
-This will install incline in development mode with all the development dependencies including testing and documentation tools.
+This installs incline in development mode with its testing, linting and
+documentation dependencies.
 
 ## Verify Installation
 

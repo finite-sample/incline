@@ -77,7 +77,9 @@ def test_gp_recovers_a_known_slope(kernel):
     y = 0.5 * x + np.sin(x)
     truth = (0.5 + np.cos(x)) / 12.0
 
-    estimate = GaussianProcess(kernel=kernel, n_restarts=0).fit(axis, y, order=1)
+    estimate = GaussianProcess(kernel=kernel, n_restarts=0).fit(
+        axis, y, derivative_order=1
+    )
     assert np.corrcoef(estimate.derivative, truth)[0, 1] > 0.9
 
 
@@ -92,9 +94,11 @@ def test_gp_standard_error_is_the_right_order_of_magnitude():
     axis = TimeAxis._build(x, "index")
     y = 0.5 * x + np.sin(x) + np.random.default_rng(0).normal(0, 0.3, 120)
 
-    estimate = GaussianProcess(kernel="rbf").fit(axis, y, order=1, se=True)
-    assert 0.01 < float(np.median(estimate.se)) < 1.0
-    assert estimate.provenance.se_method == "native"
+    estimate = GaussianProcess(kernel="rbf").fit(
+        axis, y, derivative_order=1, with_uncertainty=True
+    )
+    assert 0.01 < float(np.median(estimate.standard_error)) < 1.0
+    assert estimate.provenance.uncertainty_method == "native"
     # The whole point of a usable interval is that it can exclude zero.
     assert estimate.significant.mean() > 0.5
 
@@ -104,17 +108,19 @@ def test_gp_uncertainty_does_not_depend_on_an_arbitrary_step():
     x = np.linspace(0, 10, 100)
     y = np.sin(x) + np.random.default_rng(1).normal(0, 0.2, 100)
     coarse = GaussianProcess(length_scale=2.0, n_restarts=0).fit(
-        TimeAxis._build(x, "index"), y, order=1, se=True
+        TimeAxis._build(x, "index"), y, derivative_order=1, with_uncertainty=True
     )
     # Re-expressing the same series on a finer grid rescales the slope but must
     # not change how many points are distinguishable from zero.
     fine = GaussianProcess(length_scale=4.0, n_restarts=0).fit(
-        TimeAxis._build(2 * x, "index"), y, order=1, se=True
+        TimeAxis._build(2 * x, "index"), y, derivative_order=1, with_uncertainty=True
     )
     np.testing.assert_allclose(
         coarse.derivative, 2 * fine.derivative, rtol=1e-3, atol=1e-6
     )
-    np.testing.assert_allclose(coarse.se, 2 * fine.se, rtol=1e-3, atol=1e-6)
+    np.testing.assert_allclose(
+        coarse.standard_error, 2 * fine.standard_error, rtol=1e-3, atol=1e-6
+    )
 
 
 @pytest.mark.parametrize("kernel", KERNELS)
@@ -127,7 +133,7 @@ def test_matern_refuses_derivatives_it_does_not_have(kernel):
         pytest.skip(f"{kernel} supports every order the smoother offers")
     with pytest.raises(ValueError, match="derivative orders up to"):
         GaussianProcess(kernel=kernel, n_restarts=0).fit(
-            axis, y, order=too_far, se=True
+            axis, y, derivative_order=too_far, with_uncertainty=True
         )
 
 
@@ -157,8 +163,8 @@ def test_with_scale_actually_changes_the_gp_fit():
     axis = TimeAxis.positional(80)
     y = np.sin(axis.x / 10) + np.random.default_rng(0).normal(0, 0.3, 80)
     smoother = GaussianProcess()
-    narrow = smoother.with_scale(0.05, axis).fit(axis, y, order=1).derivative
-    wide = smoother.with_scale(0.5, axis).fit(axis, y, order=1).derivative
+    narrow = smoother.with_scale(0.05, axis).fit(axis, y, derivative_order=1).derivative
+    wide = smoother.with_scale(0.5, axis).fit(axis, y, derivative_order=1).derivative
     assert np.std(narrow) > np.std(wide)
 
 
@@ -189,15 +195,15 @@ def test_standardizing_puts_the_prior_in_units_of_the_spread():
     y = 5.0 * np.sin(axis.x / 10) + np.random.default_rng(0).normal(0, 1.5, 80)
     standardized = GaussianProcess(
         amplitude=25.0, length_scale=9.0, noise_level=2.25, optimize=False
-    ).fit(axis, y, order=1, se=True)
+    ).fit(axis, y, derivative_order=1, with_uncertainty=True)
     exact = GaussianProcess(
         amplitude=25.0,
         length_scale=9.0,
         noise_level=2.25,
         optimize=False,
         standardize=False,
-    ).fit(axis, y, order=1, se=True)
-    assert not np.allclose(standardized.se, exact.se)
+    ).fit(axis, y, derivative_order=1, with_uncertainty=True)
+    assert not np.allclose(standardized.standard_error, exact.standard_error)
 
 
 def test_level_is_recovered_whether_or_not_the_response_is_scaled():
@@ -205,7 +211,11 @@ def test_level_is_recovered_whether_or_not_the_response_is_scaled():
     axis = TimeAxis.positional(80)
     y = 100.0 + np.sin(axis.x / 8)
     for standardize in (True, False):
-        values = GaussianProcess(standardize=standardize).fit(axis, y, order=1).values
+        values = (
+            GaussianProcess(standardize=standardize)
+            .fit(axis, y, derivative_order=1)
+            .values
+        )
         assert np.mean(values) == pytest.approx(100.0, abs=1.0)
 
 
@@ -233,9 +243,17 @@ def test_state_space_slope_is_spacing_invariant(step):
     exactly once. Dividing twice, or not at all, shows up here.
     """
     axis, y = ramp(n=80, slope=2.0, step=step)
-    estimate = StateSpace().fit(axis, y, order=1)
+    estimate = StateSpace().fit(axis, y, derivative_order=1)
     interior = estimate.derivative[20:-5]
     assert np.median(interior) == pytest.approx(2.0, rel=0.1)
+
+
+def test_state_space_refuses_irregular_sampling():
+    """Its slope state advances per observation, not by each observed time gap."""
+    x = np.array([0.0, 1.0, 2.0, 4.0, 7.0, 11.0])
+    axis = TimeAxis._build(x, "index")
+    with pytest.raises(ValueError, match="uniform sampling"):
+        StateSpace().fit(axis, 0.5 * x)
 
 
 def test_state_space_derivative_is_the_slope_not_its_gradient():
@@ -245,7 +263,7 @@ def test_state_space_derivative_is_the_slope_not_its_gradient():
     zero, so the two are trivially distinguishable.
     """
     axis, y = ramp(n=80, slope=2.0)
-    estimate = StateSpace().fit(axis, y, order=1)
+    estimate = StateSpace().fit(axis, y, derivative_order=1)
     assert abs(float(np.median(estimate.derivative[20:-5])) - 2.0) < 0.3
 
 
@@ -253,19 +271,19 @@ def test_state_space_reports_a_native_standard_error():
     """The slope is a state, so its variance is a smoother-covariance entry."""
     axis = TimeAxis.positional(90)
     y = 0.05 * axis.x + np.random.default_rng(2).normal(0, 0.3, 90)
-    estimate = StateSpace().fit(axis, y, order=1, se=True)
-    assert estimate.provenance.se_method == "native"
-    assert estimate.se is not None
-    assert np.all(estimate.se[np.isfinite(estimate.se)] >= 0)
+    estimate = StateSpace().fit(axis, y, derivative_order=1, with_uncertainty=True)
+    assert estimate.provenance.uncertainty_method == "native"
+    assert estimate.standard_error is not None
+    assert np.all(estimate.standard_error[np.isfinite(estimate.standard_error)] >= 0)
 
 
 def test_state_space_seasonal_component_is_accepted():
     """A seasonal term is a real statsmodels option, unlike damped_trend."""
     axis = TimeAxis.positional(96)
     y = 0.02 * axis.x + 2 * np.sin(2 * np.pi * axis.x / 12)
-    estimate = StateSpace(seasonal_periods=12).fit(axis, y, order=1)
+    estimate = StateSpace(seasonal_period=12).fit(axis, y, derivative_order=1)
     assert np.isfinite(estimate.derivative).sum() > 80
-    assert estimate.provenance.params["seasonal_periods"] == 12
+    assert estimate.provenance.params["seasonal_period"] == 12
 
 
 def test_state_space_has_no_damped_trend_option():
@@ -299,9 +317,11 @@ def test_state_space_standard_error_is_the_right_order_of_magnitude():
         slope[t] = slope[t - 1] + rng.normal(0, 0.01)
         level[t] = level[t - 1] + slope[t - 1] + rng.normal(0, 0.05)
 
-    estimate = StateSpace().fit(axis, level + rng.normal(0, 0.5, 120), order=1, se=True)
+    estimate = StateSpace().fit(
+        axis, level + rng.normal(0, 0.5, 120), derivative_order=1, with_uncertainty=True
+    )
     error = abs(float(estimate.derivative[60]) - float(slope[60]))
-    assert float(estimate.se[60]) < 100 * max(error, 1e-3)
+    assert float(estimate.standard_error[60]) < 100 * max(error, 1e-3)
 
 
 def test_matern52_delivers_the_second_derivative_it_advertises():
@@ -317,11 +337,11 @@ def test_matern52_delivers_the_second_derivative_it_advertises():
     y = np.sin(x)
 
     estimate = GaussianProcess(kernel="matern52", n_restarts=0).fit(
-        axis, y, order=2, se=True
+        axis, y, derivative_order=2, with_uncertainty=True
     )
     assert np.all(np.isfinite(estimate.derivative))
-    assert estimate.se is not None
-    assert np.all(estimate.se >= 0)
+    assert estimate.standard_error is not None
+    assert np.all(estimate.standard_error >= 0)
     # The second derivative of sin is -sin, up to the axis rescaling.
     assert (
         np.corrcoef(estimate.derivative[20:-20], (-np.sin(x) / 144)[20:-20])[0, 1] > 0.8

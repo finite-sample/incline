@@ -4,10 +4,11 @@ A standard error is a claim about repeated sampling, so checking one means
 simulating from a trend whose derivative you already know. These generators
 supply that ground truth.
 
-``noise_std`` means the same thing for every noise type here: the **marginal**
-standard deviation of the noise process. That is worth stating because it was
-previously not true -- the AR(1) generator treated it as the innovation standard
-deviation, so the noise it produced was a factor of ``1/sqrt(1 - phi**2)`` larger
+``noise_standard_deviation`` means the same thing for every noise type here:
+the **marginal** standard deviation of the noise process. That is worth stating
+because it was previously not true -- the AR(1) generator treated it as the
+innovation standard deviation, so the noise it produced was a factor of
+``1/sqrt(1 - phi**2)`` larger
 than the white-noise generator's at the same setting (1.4x at phi=0.7, 2.3x at
 phi=0.9), and the seasonal generator ignored the argument altogether. Comparing
 methods across noise types under those definitions compared different noise
@@ -41,6 +42,39 @@ __all__ = [
 ]
 
 
+def _validate_derivative_order(derivative_order: int) -> None:
+    """Reject values that do not name a mathematical derivative."""
+    if (
+        isinstance(derivative_order, (bool, np.bool_))
+        or not isinstance(derivative_order, (int, np.integer))
+        or derivative_order < 0
+    ):
+        raise ValueError("derivative_order must be a nonnegative integer")
+
+
+def _validate_count(name: str, value: int, *, positive: bool = False) -> None:
+    """Validate an integer count."""
+    minimum = 1 if positive else 0
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, np.integer))
+        or value < minimum
+    ):
+        qualifier = "positive" if positive else "nonnegative"
+        raise ValueError(f"{name} must be a {qualifier} integer")
+
+
+def _validate_standard_deviation(value: float) -> None:
+    """Validate a noise standard deviation."""
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        or not np.isfinite(value)
+        or value < 0
+    ):
+        raise ValueError("standard_deviation must be finite and nonnegative")
+
+
 class TrendFunction(ABC):
     """A trend whose derivatives are known in closed form."""
 
@@ -57,13 +91,13 @@ class TrendFunction(ABC):
 
     @abstractmethod
     def derivative(
-        self, x: npt.NDArray[np.float64], order: int = 1
+        self, x: npt.NDArray[np.float64], derivative_order: int = 1
     ) -> npt.NDArray[np.float64]:
         """Evaluate a derivative of the trend.
 
         Args:
             x: Points to evaluate at.
-            order: Derivative order.
+            derivative_order: Derivative derivative_order.
 
         Returns:
             Derivative values.
@@ -85,6 +119,10 @@ class PolynomialTrend(TrendFunction):
     def __init__(self, coefficients: Sequence[float]) -> None:
         """Store the coefficients in ascending power order."""
         self.coefficients = np.asarray(coefficients, dtype=np.float64)
+        if self.coefficients.ndim != 1 or self.coefficients.size == 0:
+            raise ValueError("coefficients must be a nonempty one-dimensional sequence")
+        if not np.all(np.isfinite(self.coefficients)):
+            raise ValueError("coefficients must contain only finite values")
 
     def __call__(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """Evaluate the polynomial."""
@@ -93,14 +131,15 @@ class PolynomialTrend(TrendFunction):
         ).astype(np.float64, copy=False)
 
     def derivative(
-        self, x: npt.NDArray[np.float64], order: int = 1
+        self, x: npt.NDArray[np.float64], derivative_order: int = 1
     ) -> npt.NDArray[np.float64]:
-        """Differentiate the polynomial ``order`` times."""
+        """Differentiate the polynomial ``derivative_order`` times."""
+        _validate_derivative_order(derivative_order)
         x = np.asarray(x, dtype=np.float64)
-        if order == 0:
+        if derivative_order == 0:
             return self(x)
-        # polyder works in descending order, which is why the reversals bracket it.
-        derived = np.polyder(self.coefficients[::-1], order)
+        # polyder uses descending powers, hence the reversals around it.
+        derived = np.polyder(self.coefficients[::-1], derivative_order)
         if len(derived) == 0:
             return np.zeros_like(x)
         return np.polyval(derived, x).astype(np.float64, copy=False)
@@ -124,6 +163,8 @@ class SinusoidalTrend(TrendFunction):
         self, amplitude: float = 1.0, frequency: float = 1.0, phase: float = 0.0
     ) -> None:
         """Store the sinusoid's parameters."""
+        if not np.all(np.isfinite([amplitude, frequency, phase])):
+            raise ValueError("amplitude, frequency and phase must be finite")
         self.amplitude = amplitude
         self.frequency = frequency
         self.phase = phase
@@ -137,12 +178,13 @@ class SinusoidalTrend(TrendFunction):
         return self.amplitude * np.sin(self._angle(x))
 
     def derivative(
-        self, x: npt.NDArray[np.float64], order: int = 1
+        self, x: npt.NDArray[np.float64], derivative_order: int = 1
     ) -> npt.NDArray[np.float64]:
         """Differentiate, using the period-4 cycle of sine's derivatives."""
+        _validate_derivative_order(derivative_order)
         angle = self._angle(x)
-        scale = self.amplitude * (2 * np.pi * self.frequency) ** order
-        match order % 4:
+        scale = self.amplitude * (2 * np.pi * self.frequency) ** derivative_order
+        match derivative_order % 4:
             case 0:
                 return scale * np.sin(angle)
             case 1:
@@ -168,6 +210,8 @@ class ExponentialTrend(TrendFunction):
 
     def __init__(self, scale: float = 1.0, rate: float = 0.1) -> None:
         """Store the scale and rate."""
+        if not np.all(np.isfinite([scale, rate])):
+            raise ValueError("scale and rate must be finite")
         self.scale = scale
         self.rate = rate
 
@@ -176,10 +220,15 @@ class ExponentialTrend(TrendFunction):
         return self.scale * np.exp(self.rate * np.asarray(x, dtype=np.float64))
 
     def derivative(
-        self, x: npt.NDArray[np.float64], order: int = 1
+        self, x: npt.NDArray[np.float64], derivative_order: int = 1
     ) -> npt.NDArray[np.float64]:
         """Every derivative is the function times a power of the rate."""
-        return self.scale * (self.rate**order) * np.exp(self.rate * np.asarray(x))
+        _validate_derivative_order(derivative_order)
+        return (
+            self.scale
+            * (self.rate**derivative_order)
+            * np.exp(self.rate * np.asarray(x))
+        )
 
     @property
     def name(self) -> str:
@@ -204,9 +253,17 @@ class StepTrend(TrendFunction):
         """Store the segment boundaries and their values."""
         self.breakpoints = np.asarray(breakpoints, dtype=np.float64)
         self.values = np.asarray(values, dtype=np.float64)
-        if len(self.values) < len(self.breakpoints):
+        if self.breakpoints.ndim != 1 or self.values.ndim != 1:
+            raise ValueError("breakpoints and values must be one-dimensional")
+        if not np.all(np.isfinite(self.breakpoints)) or not np.all(
+            np.isfinite(self.values)
+        ):
+            raise ValueError("breakpoints and values must contain only finite values")
+        if np.any(np.diff(self.breakpoints) <= 0):
+            raise ValueError("breakpoints must be strictly increasing")
+        if len(self.values) != len(self.breakpoints) + 1:
             raise ValueError(
-                f"need at least one value per breakpoint, got "
+                f"need one value per segment, got "
                 f"{len(self.values)} values for {len(self.breakpoints)} breakpoints"
             )
 
@@ -219,10 +276,12 @@ class StepTrend(TrendFunction):
         return self.values[segment]
 
     def derivative(
-        self, x: npt.NDArray[np.float64], order: int = 1
+        self, x: npt.NDArray[np.float64], derivative_order: int = 1
     ) -> npt.NDArray[np.float64]:
         """Zero away from the jumps, where the derivative does not exist."""
-        del order
+        _validate_derivative_order(derivative_order)
+        if derivative_order == 0:
+            return self(x)
         return np.zeros_like(np.asarray(x, dtype=np.float64))
 
     @property
@@ -236,39 +295,43 @@ class NoiseGenerator:
 
     @staticmethod
     def white(
-        n: int, std: float = 1.0, random_state: int | np.random.Generator | None = None
+        n: int,
+        standard_deviation: float = 1.0,
+        random_state: int | np.random.Generator | None = None,
     ) -> npt.NDArray[np.float64]:
         """Independent Gaussian noise.
 
         Args:
             n: Number of points.
-            std: Marginal standard deviation.
+            standard_deviation: Marginal standard deviation.
             random_state: Seed or Generator.
 
         Returns:
             The noise series.
         """
-        return np.random.default_rng(random_state).normal(0, std, n)
+        _validate_count("n", n)
+        _validate_standard_deviation(standard_deviation)
+        return np.random.default_rng(random_state).normal(0, standard_deviation, n)
 
     @staticmethod
     def ar1(
         n: int,
         phi: float = 0.7,
-        std: float = 1.0,
+        standard_deviation: float = 1.0,
         random_state: int | np.random.Generator | None = None,
     ) -> npt.NDArray[np.float64]:
         """First-order autoregressive noise, started in its stationary state.
 
-        ``std`` is the marginal standard deviation, so the innovation variance
-        is scaled by ``1 - phi**2`` and the first draw comes from the stationary
-        distribution. Without both, the series would be a different size from
-        white noise at the same ``std`` and would drift for its first few dozen
-        points.
+        ``standard_deviation`` is the marginal standard deviation, so the
+        innovation variance is scaled by ``1 - phi**2`` and the first draw
+        comes from the stationary distribution. Without both, the series would
+        be a different size from white noise at the same setting and would
+        drift for its first few dozen points.
 
         Args:
             n: Number of points.
             phi: Autocorrelation at lag one, strictly inside (-1, 1).
-            std: Marginal standard deviation.
+            standard_deviation: Marginal standard deviation.
             random_state: Seed or Generator.
 
         Returns:
@@ -277,14 +340,21 @@ class NoiseGenerator:
         Raises:
             ValueError: If ``phi`` is not inside (-1, 1).
         """
-        if not -1.0 < phi < 1.0:
+        _validate_count("n", n)
+        _validate_standard_deviation(standard_deviation)
+        if (
+            isinstance(phi, (bool, np.bool_))
+            or not isinstance(phi, (int, float, np.integer, np.floating))
+            or not np.isfinite(phi)
+            or not -1.0 < phi < 1.0
+        ):
             raise ValueError(f"phi must be inside (-1, 1) for stationarity, got {phi}")
         rng = np.random.default_rng(random_state)
-        innovation = std * np.sqrt(1 - phi**2)
+        innovation = standard_deviation * np.sqrt(1 - phi**2)
         noise = np.empty(n, dtype=np.float64)
         if n == 0:
             return noise
-        noise[0] = rng.normal(0, std)
+        noise[0] = rng.normal(0, standard_deviation)
         draws = rng.normal(0, innovation, n)
         for i in range(1, n):
             noise[i] = phi * noise[i - 1] + draws[i]
@@ -294,26 +364,42 @@ class NoiseGenerator:
     def seasonal(
         n: int,
         period: int = 12,
-        std: float = 1.0,
+        standard_deviation: float = 1.0,
         seasonal_fraction: float = 0.8,
         random_state: int | np.random.Generator | None = None,
     ) -> npt.NDArray[np.float64]:
-        """A deterministic cycle plus white noise, scaled to ``std`` overall.
+        """A deterministic cycle plus white noise with a fixed overall scale.
 
         Args:
             n: Number of points.
             period: Length of one cycle in observations.
-            std: Marginal standard deviation of the combined series.
+            standard_deviation: Marginal standard deviation of the combined series.
             seasonal_fraction: Share of the variance carried by the cycle.
             random_state: Seed or Generator.
 
         Returns:
             The noise series.
+
+        Raises:
+            ValueError: If a count, scale, or variance fraction is outside
+                its documented domain.
         """
+        _validate_count("n", n)
+        _validate_count("period", period, positive=True)
+        if period < 2:
+            raise ValueError("period must be an integer of at least 2")
+        _validate_standard_deviation(standard_deviation)
+        if (
+            isinstance(seasonal_fraction, (bool, np.bool_))
+            or not isinstance(seasonal_fraction, (int, float, np.integer, np.floating))
+            or not np.isfinite(seasonal_fraction)
+            or not 0.0 <= seasonal_fraction <= 1.0
+        ):
+            raise ValueError("seasonal_fraction must be finite and between 0 and 1")
         rng = np.random.default_rng(random_state)
         # A sine of amplitude a has variance a**2 / 2, hence the sqrt(2).
-        seasonal_sd = std * np.sqrt(seasonal_fraction)
-        residual_sd = std * np.sqrt(1 - seasonal_fraction)
+        seasonal_sd = standard_deviation * np.sqrt(seasonal_fraction)
+        residual_sd = standard_deviation * np.sqrt(1 - seasonal_fraction)
         cycle = seasonal_sd * np.sqrt(2) * np.sin(2 * np.pi * np.arange(n) / period)
         return cycle + rng.normal(0, residual_sd, n)
 
@@ -323,9 +409,9 @@ def generate_time_series(
     n_points: int = 100,
     x_range: tuple[float, float] = (0.0, 10.0),
     noise_type: str = "white",
-    noise_std: float = 0.1,
+    noise_standard_deviation: float = 0.1,
     irregular_spacing: bool = False,
-    missing_data_prob: float = 0.0,
+    missing_probability: float = 0.0,
     random_state: int | np.random.Generator | None = None,
     **noise_kwargs: Any,
 ) -> tuple[pd.DataFrame, npt.NDArray[np.float64]]:
@@ -336,10 +422,11 @@ def generate_time_series(
         n_points: Number of observations.
         x_range: Span of x values.
         noise_type: ``'white'``, ``'ar1'`` or ``'seasonal'``.
-        noise_std: Marginal standard deviation of the noise, whichever type.
+        noise_standard_deviation: Marginal standard deviation for every noise
+            type.
         irregular_spacing: Draw x uniformly rather than on a grid. The result
             then carries a numeric ``time`` column instead of a DatetimeIndex.
-        missing_data_prob: Fraction of values blanked to NaN.
+        missing_probability: Fraction of values blanked to NaN.
         random_state: Seed or Generator.
         **noise_kwargs: Extra arguments for the noise process, such as ``phi``
             for AR(1) or ``period`` for seasonal.
@@ -349,8 +436,36 @@ def generate_time_series(
         derivative at each point).
 
     Raises:
-        ValueError: If the noise type is unknown.
+        TypeError: If a noise-specific argument is not accepted by the selected
+            noise model.
+        ValueError: If an argument is outside its domain or the noise type is
+            unknown.
     """
+    _validate_count("n_points", n_points, positive=True)
+    if (
+        not isinstance(x_range, tuple)
+        or len(x_range) != 2
+        or not np.all(np.isfinite(x_range))
+        or x_range[0] >= x_range[1]
+    ):
+        raise ValueError("x_range must be a finite increasing pair")
+    _validate_standard_deviation(noise_standard_deviation)
+    if not isinstance(irregular_spacing, (bool, np.bool_)):
+        raise ValueError("irregular_spacing must be boolean")
+    if not np.isfinite(missing_probability) or not 0.0 <= missing_probability <= 1.0:
+        raise ValueError("missing_probability must be finite and between 0 and 1")
+
+    accepted_noise_arguments = {
+        "white": set(),
+        "ar1": {"phi"},
+        "seasonal": {"period", "seasonal_fraction"},
+    }
+    if noise_type in accepted_noise_arguments:
+        unexpected = set(noise_kwargs) - accepted_noise_arguments[noise_type]
+        if unexpected:
+            names = ", ".join(sorted(unexpected))
+            raise TypeError(f"noise_type={noise_type!r} does not accept: {names}")
+
     rng = np.random.default_rng(random_state)
 
     if irregular_spacing:
@@ -359,20 +474,20 @@ def generate_time_series(
         x = np.linspace(x_range[0], x_range[1], n_points)
 
     true_values = trend_function(x)
-    true_derivative = trend_function.derivative(x, order=1)
+    true_derivative = trend_function.derivative(x, derivative_order=1)
 
     match noise_type:
         case "white":
-            noise = NoiseGenerator.white(n_points, noise_std, rng)
+            noise = NoiseGenerator.white(n_points, noise_standard_deviation, rng)
         case "ar1":
             noise = NoiseGenerator.ar1(
-                n_points, noise_kwargs.get("phi", 0.7), noise_std, rng
+                n_points, noise_kwargs.get("phi", 0.7), noise_standard_deviation, rng
             )
         case "seasonal":
             noise = NoiseGenerator.seasonal(
                 n_points,
                 noise_kwargs.get("period", 12),
-                noise_std,
+                noise_standard_deviation,
                 noise_kwargs.get("seasonal_fraction", 0.8),
                 rng,
             )
@@ -406,8 +521,8 @@ def generate_time_series(
             ),
         )
 
-    if missing_data_prob > 0:
-        frame.loc[rng.random(n_points) < missing_data_prob, "value"] = np.nan
+    if missing_probability > 0:
+        frame.loc[rng.random(n_points) < missing_probability, "value"] = np.nan
 
     return frame, true_derivative
 

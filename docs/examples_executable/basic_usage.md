@@ -10,14 +10,15 @@ Let's start with a simple example using sample time series data:
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from incline import naive_trend, spline_trend, sgolay_trend
+from incline import naive_trend, sgolay_trend, smoothing_spline_trend
 
 # Load sample data
-np.random.seed(42)
+RANDOM_STATE = 42
+rng = np.random.default_rng(RANDOM_STATE)
 dates = pd.date_range('2020-01-01', periods=30, freq='D')
 # Create a time series with trend + noise
 trend_component = 0.5 * np.arange(30)
-noise = np.random.normal(0, 1, 30)
+noise = rng.normal(0, 1, 30)
 values = 100 + trend_component + noise
 
 df = pd.DataFrame({'value': values}, index=dates)
@@ -32,8 +33,8 @@ print(f"\nData shape: {df.shape}")
 ```{jupyter-execute}
 # Apply all three basic methods
 naive_result = naive_trend(df)
-spline_result = spline_trend(df, function_order=3, s=5)
-sgolay_result = sgolay_trend(df, window_length=7, function_order=3)
+spline_result = smoothing_spline_trend(df, penalty=10)
+sgolay_result = sgolay_trend(df, window_length=7, degree=3)
 
 # Create comparison plot
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
@@ -82,13 +83,13 @@ for method_name, derivatives in methods.items():
 
     mse = np.mean((valid_derivatives - true_derivative) ** 2)
     bias = np.mean(valid_derivatives - true_derivative)
-    std = np.std(valid_derivatives)
+    standard_deviation = np.std(valid_derivatives)
 
     performance_metrics[method_name] = {
-        'MSE': mse,
-        'Bias': bias,
-        'Std Dev': std,
-        'Valid Points': len(valid_derivatives)
+        'mean_squared_error': mse,
+        'bias': bias,
+        'standard_deviation': standard_deviation,
+        'valid_points': len(valid_derivatives)
     }
 
 # Create performance comparison table
@@ -103,18 +104,18 @@ print(performance_df.round(4))
 Understanding how smoothing parameters affect results:
 
 ```{jupyter-execute}
-# Test different smoothing parameters for spline method
-smoothing_factors = [0.1, 1, 5, 20, 100]
+# Test different roughness penalties for the smoothing spline
+penalties = [0.1, 1, 10, 100, 1000]
 colors = ['purple', 'blue', 'green', 'orange', 'red']
 
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
 
 # Plot smoothed curves
 ax1.plot(df.index, df['value'], 'ko-', alpha=0.6, markersize=4, label='Original Data')
-for i, s_factor in enumerate(smoothing_factors):
-    result = spline_trend(df, function_order=3, s=s_factor)
+for i, penalty in enumerate(penalties):
+    result = smoothing_spline_trend(df, penalty=penalty)
     ax1.plot(result.index, result['smoothed_value'],
-            color=colors[i], linewidth=2, label=f's = {s_factor}')
+            color=colors[i], linewidth=2, label=f'penalty = {penalty}')
 
 ax1.set_ylabel('Value')
 ax1.set_title('Effect of Smoothing Parameter on Spline Fits')
@@ -122,10 +123,10 @@ ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
 ax1.grid(True, alpha=0.3)
 
 # Plot corresponding derivatives
-for i, s_factor in enumerate(smoothing_factors):
-    result = spline_trend(df, function_order=3, s=s_factor)
+for i, penalty in enumerate(penalties):
+    result = smoothing_spline_trend(df, penalty=penalty)
     ax2.plot(result.index, result['derivative_value'],
-            color=colors[i], linewidth=2, label=f's = {s_factor}')
+            color=colors[i], linewidth=2, label=f'penalty = {penalty}')
 
 ax2.axhline(y=0.5, color='black', linestyle='--', alpha=0.7, label='True Trend')
 ax2.axhline(y=0, color='gray', linestyle='-', alpha=0.5)
@@ -141,17 +142,16 @@ plt.show()
 # Calculate MSE for each smoothing parameter
 print("\nSmoothing Parameter Analysis:")
 print("=" * 35)
-for s_factor in smoothing_factors:
-    result = spline_trend(df, function_order=3, s=s_factor)
+for penalty in penalties:
+    result = smoothing_spline_trend(df, penalty=penalty)
     mse = np.mean((result['derivative_value'] - true_derivative) ** 2)
-    print(f"s = {s_factor:3.0f}: MSE = {mse:.4f}")
+    print(f"penalty = {penalty:6.1f}: MSE = {mse:.4f}")
 ```
 
 ## Working with Real Time Series Features
 
 ```{jupyter-execute}
 # Create a more complex time series with multiple characteristics
-np.random.seed(123)
 n_points = 60
 dates = pd.date_range('2020-01-01', periods=n_points, freq='D')
 
@@ -159,23 +159,23 @@ dates = pd.date_range('2020-01-01', periods=n_points, freq='D')
 t = np.arange(n_points)
 trend = 0.3 * t
 seasonal = 5 * np.sin(2 * np.pi * t / 7)  # Weekly seasonality
-noise = np.random.normal(0, 2, n_points)
+noise = rng.normal(0, 2, n_points)
 
 # Add some outliers
 outlier_indices = [15, 35, 50]
 complex_values = 100 + trend + seasonal + noise
 for idx in outlier_indices:
-    complex_values[idx] += np.random.choice([-10, 10])
+    complex_values[idx] += rng.choice([-10, 10])
 
 complex_df = pd.DataFrame({'value': complex_values}, index=dates)
 
 # Apply different methods
 methods_results = {
     'Naive': naive_trend(complex_df),
-    'Spline (s=5)': spline_trend(complex_df, s=5),
-    'Spline (s=50)': spline_trend(complex_df, s=50),
-    'S-G (win=7)': sgolay_trend(complex_df, window_length=7, function_order=3),
-    'S-G (win=15)': sgolay_trend(complex_df, window_length=15, function_order=3),
+    'Smoothing spline (penalty 1)': smoothing_spline_trend(complex_df, penalty=1),
+    'Smoothing spline (penalty 100)': smoothing_spline_trend(complex_df, penalty=100),
+    'S-G (window 7)': sgolay_trend(complex_df, window_length=7, degree=3),
+    'S-G (window 15)': sgolay_trend(complex_df, window_length=15, degree=3),
 }
 
 # Plot results
@@ -188,7 +188,11 @@ ax1.scatter([complex_df.index[i] for i in outlier_indices],
            color='red', s=50, zorder=5, label='Outliers')
 
 # Show some smoothed curves
-colors_dict = {'Spline (s=5)': 'blue', 'Spline (s=50)': 'red', 'S-G (win=15)': 'green'}
+colors_dict = {
+    'Smoothing spline (penalty 1)': 'blue',
+    'Smoothing spline (penalty 100)': 'red',
+    'S-G (window 15)': 'green',
+}
 for name, color in colors_dict.items():
     result = methods_results[name]
     if 'smoothed_value' in result.columns:

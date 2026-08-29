@@ -2,9 +2,9 @@
 
 These generators are the ground truth the calibration suite measures against, so
 a silent error here would quietly invalidate every coverage number in
-``test_calibration.py``. Two properties matter most: the closed-form derivatives
-really are the derivatives, and ``noise_std`` means the same thing for every
-noise process.
+``test_calibration.py``. Two properties matter most: the closed-form
+derivatives really are derivatives, and ``noise_standard_deviation`` means
+the same thing for every noise process.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def test_polynomial_derivative_past_its_degree_is_exactly_zero():
     assert np.all(line.derivative(x, 5) == 0.0)
 
 
-def test_step_trend_selects_the_right_segment():
+def test_step_trend_standard_errorlects_the_right_segment():
     """Breakpoints are left-closed, and the last value extends past the end."""
     step = StepTrend(breakpoints=[3.0, 7.0], values=[1.0, 3.0, 2.0])
     got = step(np.array([0.0, 3.0, 5.0, 7.0, 9.0]))
@@ -64,9 +64,16 @@ def test_step_trend_selects_the_right_segment():
     assert np.all(step.derivative(np.array([0.0, 5.0])) == 0.0)
 
 
+def test_step_trend_zeroth_derivative_is_the_function():
+    """Derivative order zero has the standard mathematical meaning."""
+    step = StepTrend(breakpoints=[3.0], values=[1.0, 4.0])
+    x = np.array([0.0, 3.0, 5.0])
+    np.testing.assert_array_equal(step.derivative(x, derivative_order=0), step(x))
+
+
 def test_step_trend_rejects_too_few_values():
     """A segment without a value is a construction error, not a silent clip."""
-    with pytest.raises(ValueError, match="one value per breakpoint"):
+    with pytest.raises(ValueError, match="one value per segment"):
         StepTrend(breakpoints=[1.0, 2.0], values=[1.0])
 
 
@@ -165,11 +172,36 @@ def test_missing_data_blanks_values_but_keeps_the_truth():
     frame, _ = generate_time_series(
         PolynomialTrend([0.0, 1.0]),
         n_points=200,
-        missing_data_prob=0.2,
+        missing_probability=0.2,
         random_state=3,
     )
     assert 0 < frame["value"].isna().sum() < 200
     assert frame["true_value"].notna().all()
+
+
+@pytest.mark.parametrize("probability", [-0.01, 1.01, np.nan])
+def test_missing_probabilityability_must_be_a_probability(probability):
+    """Out-of-domain probabilities must not silently mean none or all."""
+    with pytest.raises(ValueError, match="missing_probability"):
+        generate_time_series(
+            PolynomialTrend([0.0, 1.0]), missing_probability=probability
+        )
+
+
+@pytest.mark.parametrize(
+    ("noise_type", "kwargs"),
+    [
+        ("white", {"phi": 0.5}),
+        ("ar1", {"period": 12}),
+        ("seasonal", {"phi": 0.5}),
+    ],
+)
+def test_noise_specific_arguments_are_not_silently_ignored(noise_type, kwargs):
+    """A valid argument for a different noise model is still invalid here."""
+    with pytest.raises(TypeError, match="does not accept"):
+        generate_time_series(
+            PolynomialTrend([0.0, 1.0]), noise_type=noise_type, **kwargs
+        )
 
 
 def test_unknown_noise_type_is_refused():
@@ -200,7 +232,11 @@ def test_the_datetime_index_matches_the_x_the_derivative_is_stated_on():
     """
     trend = PolynomialTrend([0.0, 2.0])
     frame, truth = generate_time_series(
-        trend, n_points=100, x_range=(0.0, 10.0), noise_std=0.0, random_state=0
+        trend,
+        n_points=100,
+        x_range=(0.0, 10.0),
+        noise_standard_deviation=0.0,
+        random_state=0,
     )
     axis = TimeAxis.from_index(frame.index)
     np.testing.assert_allclose(axis.x, np.linspace(0.0, 10.0, 100), atol=1e-9)
@@ -215,10 +251,10 @@ def test_the_stated_derivative_is_recovered_per_unit_of_the_index():
         PolynomialTrend([0.0, 2.0]),
         n_points=80,
         x_range=(0.0, 8.0),
-        noise_std=0.0,
+        noise_standard_deviation=0.0,
         random_state=0,
     )
     estimate = SavitzkyGolay(window_length=11).fit(
-        TimeAxis.from_index(frame.index), frame["value"].to_numpy(), order=1
+        TimeAxis.from_index(frame.index), frame["value"].to_numpy(), derivative_order=1
     )
     assert float(np.median(estimate.derivative)) == pytest.approx(2.0, rel=1e-6)

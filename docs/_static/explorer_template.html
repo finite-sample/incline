@@ -374,10 +374,13 @@
     const spec = DATA.series[state.series];
     const panel = current();
     const method = DATA.methods[state.method];
-    const useBias = state.bias && panel.bc_derivative !== null;
+    const useBias = state.bias && panel.bias_corrected_derivative !== null;
+    const useAr1 = state.ar1 && method.supports_noise_model;
 
-    const derivative = useBias ? panel.bc_derivative : panel.derivative;
-    let se = useBias ? panel.bc_se : (state.ar1 ? panel.se_ar1 : panel.se_iid);
+    const derivative = useBias ? panel.bias_corrected_derivative : panel.derivative;
+    const standardError = useBias
+      ? panel.bias_corrected_standard_error
+      : (useAr1 ? panel.standard_error_ar1 : panel.standard_error_iid);
     let mult = 1.959963985;
     const wholeCurve = Boolean(state.simultaneous && panel.simultaneous_multiplier);
     if (wholeCurve) mult = panel.simultaneous_multiplier;
@@ -392,8 +395,9 @@
     }
     $("ex-note").textContent = spec.note;
     $("ex-scale-val").textContent = `(${DATA.scales[state.scale]})`;
-    $("ex-bias").disabled = panel.bc_derivative === null;
+    $("ex-bias").disabled = panel.bias_corrected_derivative === null;
     $("ex-sim").disabled = panel.simultaneous_multiplier === null;
+    $("ex-ar").disabled = !method.supports_noise_model;
 
     // Top panel: observations and the smooth.
     draw($("ex-top"), 210, [
@@ -407,17 +411,19 @@
     const layers = [{ kind: "zero" }];
     const legend = [];
     if (state.uncertainty) {
-      const upper = derivative.map((d, i) => d + mult * se[i]);
-      const lower = derivative.map((d, i) => d - mult * se[i]);
+      const upper = derivative.map((d, i) => d + mult * standardError[i]);
+      const lower = derivative.map((d, i) => d - mult * standardError[i]);
       layers.push({
         kind: "band", upper, lower, color: css("--series-1"), opacity: 0.2,
       });
       legend.push([css("--series-1"),
         `${wholeCurve ? "whole-curve" : "95% pointwise"} band` +
-        `${state.ar1 ? ", AR(1) noise" : ""}`, true]);
-      if (state.ar1) {
-        const iidUpper = derivative.map((d, i) => d + mult * panel.se_iid[i]);
-        const iidLower = derivative.map((d, i) => d - mult * panel.se_iid[i]);
+        `${useAr1 ? ", AR(1) noise" : ""}`, true]);
+      if (useAr1) {
+        const iidUpper = derivative.map(
+          (d, i) => d + mult * panel.standard_error_iid[i]);
+        const iidLower = derivative.map(
+          (d, i) => d - mult * panel.standard_error_iid[i]);
         layers.push({
           kind: "line", values: iidUpper, color: css("--series-2"),
           width: 1.5, dash: "none",
@@ -444,10 +450,12 @@
       `${t}</span>`).join("");
 
     draw($("ex-bot"), 230, layers, "slope", $("ex-tip2"), (i) => {
-      const d = derivative[i], s = se[i];
-      const clears = isFinite(s) && (d - mult * s > 0 || d + mult * s < 0);
+      const d = derivative[i], standardErrorAtPoint = standardError[i];
+      const clears = isFinite(standardErrorAtPoint) &&
+        (d - mult * standardErrorAtPoint > 0 ||
+         d + mult * standardErrorAtPoint < 0);
       return `<strong>t = ${Math.round(DATA.x[i])}</strong><br>` +
-        `slope ${fmt(d)}<br>se ${fmt(s)}<br>` +
+        `slope ${fmt(d)}<br>standard error ${fmt(standardErrorAtPoint)}<br>` +
         `${clears ? "clears zero" : "consistent with no trend"}`;
     });
 
@@ -456,13 +464,17 @@
       return v.length ? v[Math.floor(v.length / 2)] : NaN;
     };
     const sig = derivative.filter((d, i) =>
-      isFinite(se[i]) && (d - mult * se[i] > 0 || d + mult * se[i] < 0)).length;
+      isFinite(standardError[i]) &&
+      (d - mult * standardError[i] > 0 ||
+       d + mult * standardError[i] < 0)).length;
     $("ex-readout").innerHTML =
-      `<code>se_method: ${panel.se_method}</code> &mdash; ` +
-      `${method.linear
-        ? "a linear smoother, so this variance is exact rather than estimated."
-        : "not a linear smoother, so the sampling distribution is simulated."}` +
-      `<br>Median standard error <code>${fmt(median(se))}</code>, and ` +
+      `<code>uncertainty_method: ${panel.uncertainty_method}</code> &mdash; ` +
+      `${panel.uncertainty_method === "native"
+        ? "model-based posterior uncertainty from the fitted estimator."
+        : method.linear
+          ? "a linear smoother, so this variance is exact rather than estimated."
+          : "not a linear smoother, so the sampling distribution is simulated."}` +
+      `<br>Median standard error <code>${fmt(median(standardError))}</code>, and ` +
       `<strong>${sig}</strong> of ${derivative.length} points have an interval ` +
       `that excludes zero` +
       (wholeCurve

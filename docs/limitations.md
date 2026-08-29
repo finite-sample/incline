@@ -1,8 +1,8 @@
 # Limitations
 
 What the package does not do, and what its numbers do not mean. Everything
-quantified below is measured by `tests/test_econometrics.py`, which runs against
-the shipped code rather than against a description of it.
+quantified below is measured by the test suite, which runs against the shipped
+code rather than against a description of it.
 
 ## A standard error is about the smooth, not about the truth
 
@@ -19,8 +19,8 @@ are separable, and worth separating, because they fail differently:
 | Savitzky-Golay, window 21 | 1.010 | 0.950 | 0.950 |
 | Naive differencing | 1.001 | 0.949 | 0.949 |
 | Local polynomial, bw 0.15 | 1.008 | 0.947 | **0.043** |
-| Penalized spline, λ=5·10⁴ | 1.018 | 0.952 | **0.056** |
-| LOESS, frac 0.3 | 1.026 | 0.952 | **0.089** |
+| Smoothing spline, λ=5·10⁴ | 1.018 | 0.952 | **0.056** |
+| LOESS, span 0.3 | 1.026 | 0.952 | **0.089** |
 
 The variance is right in every row. Where the last column collapses, the
 interval is correctly sized and centered in the wrong place, because that
@@ -37,6 +37,15 @@ When the truth happens to lie inside a method's approximation space — a
 quadratic for a degree-2 local polynomial, say — the bias is exactly zero and
 coverage of the true derivative is nominal. That is the regime the calibration
 tests use, precisely so that the standard error is measured on its own terms.
+
+L1 trend filtering makes this distinction particularly stark around a change in
+slope. On a piecewise-linear validation series, an explicit penalty fraction of
+0.2 produced bootstrap standard errors within about 4% of the estimator's true
+spread on the constant-slope segments, but shrank the two slopes toward each
+other enough that nominal intervals never covered either true slope in 100
+replicates. The derivative at the kink itself is undefined and is deliberately
+not used as a validation target. Choose the penalty for the features that must
+survive, and do not read a bootstrap interval as correcting regularization bias.
 
 ## Independent noise is assumed unless you say otherwise
 
@@ -124,13 +133,13 @@ Asking `trend_with_deseasonalization` for a standard error bootstraps the
 decomposition *and* the trend fit together, and takes the interval from the
 spread. It errs slightly conservative, which is the right direction.
 
-That costs `n_bootstrap` decompositions, and is only paid when `se=True`. To
+That costs `n_bootstrap` decompositions, and is only paid when `with_uncertainty=True`. To
 skip it, compose the two steps yourself — which states the assumption instead of
 hiding it:
 
 ```python
 adjusted = deseasonalize(df)
-result = sgolay_trend(adjusted, column_value="deseasonalized", se=True)
+result = sgolay_trend(adjusted, value_column="deseasonalized", with_uncertainty=True)
 ```
 
 ## Non-Gaussian noise is fine; non-constant variance is not
@@ -176,7 +185,7 @@ A series with `NaN` values is rejected rather than estimated. Interpolate or
 drop the gaps first:
 
 ```python
-trend = sgolay_trend(df.assign(value=df["value"].interpolate()), se=True)
+trend = sgolay_trend(df.assign(value=df["value"].interpolate()), with_uncertainty=True)
 ```
 
 This is a deliberate refusal, and it is stricter than the package used to be.

@@ -1,6 +1,6 @@
 [project]
 name = "incline"
-version = "1.0.0"
+version = "2.0.0"
 description = "Estimate Trend at a Particular Point in a Noisy Time Series"
 readme = "README.md"
 license = "MIT"
@@ -51,6 +51,7 @@ dev = [
     { include-group = "test" },
 ]
 test = [
+    "coverage>=7.9",
     # The Monte Carlo machinery, extracted from this package's own tests.
     "simcheck @ git+https://github.com/finite-sample/simcheck",
     "pytest>=8",
@@ -70,8 +71,6 @@ docs = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
-# The example notebook is a demo, not library code.
-extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 external = ["DOC"]
@@ -122,6 +121,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
+core = "sysmon"
 source = ["src"]
 
 [tool.pydoclint]

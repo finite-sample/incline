@@ -70,12 +70,12 @@ def test_gaussian_process_credible_intervals_cover_under_its_prior(reps, capsys)
             noise_level=noise_sd**2,
             optimize=False,
             standardize=False,
-        ).fit(axis, observed, order=1, se=True)
+        ).fit(axis, observed, derivative_order=1, with_uncertainty=True)
 
         hits += bool(
             estimate.ci_lower[POINT] <= derivative[POINT] <= estimate.ci_upper[POINT]
         )
-        widths.append(float(estimate.se[POINT]))
+        widths.append(float(estimate.standard_error[POINT]))
 
     with capsys.disabled():
         print(
@@ -111,13 +111,15 @@ def test_state_space_credible_intervals_cover_under_its_own_process(reps, capsys
     reported = []
     for _ in range(reps):
         observed, slope = draw_from_local_linear_trend(n, 0.5, 0.05, 0.01, rng)
-        estimate = StateSpace().fit(axis, observed, order=1, se=True)
+        estimate = StateSpace().fit(
+            axis, observed, derivative_order=1, with_uncertainty=True
+        )
 
         hits += bool(
             estimate.ci_lower[POINT] <= slope[POINT] <= estimate.ci_upper[POINT]
         )
         errors.append(float(estimate.derivative[POINT]) - float(slope[POINT]))
-        reported.append(float(estimate.se[POINT]))
+        reported.append(float(estimate.standard_error[POINT]))
 
     coverage = hits / reps
     root_mean_square = float(np.sqrt(np.mean(np.square(errors))))
@@ -162,7 +164,7 @@ def test_a_wrong_length_scale_breaks_gp_calibration(reps):
             noise_level=noise_sd**2,
             optimize=False,
             standardize=False,
-        ).fit(axis, observed, order=1, se=True)
+        ).fit(axis, observed, derivative_order=1, with_uncertainty=True)
         hits += bool(
             estimate.ci_lower[POINT] <= derivative[POINT] <= estimate.ci_upper[POINT]
         )

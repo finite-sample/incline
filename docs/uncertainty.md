@@ -14,7 +14,7 @@ Which machinery applies is decided by what the smoother *is*, never by its name.
 
 | Route | When | What you get |
 |---|---|---|
-| `operator` | The derivative is a fixed linear map of the data | The **exact** sampling variance, `diag(L Σ Lᵀ)` — no asymptotics, no resampling |
+| `operator` | The derivative is a fixed linear map of the data | The sampling variance `diag(L Σ Lᵀ)`, conditional on the fitted or supplied noise covariance — no asymptotics, no resampling |
 | `native` | The smoother is a probability model (Gaussian process, state space) | Its own posterior variance, which it already knows |
 | `bootstrap` | Everything else | A simulated sampling distribution |
 
@@ -22,10 +22,10 @@ Whether a smoother is linear is settled by probing it, not by assumption:
 
 | Linear — exact variance | Nonlinear — bootstrapped |
 |---|---|
-| Savitzky-Golay | `UnivariateSpline` (picks knots from the data) |
-| Local polynomial | Penalized spline with GCV (penalty chosen from the data) |
-| Penalized spline at fixed `lam` | LOESS with `robust=True` *(the default)* |
-| LOESS with `robust=False` | L1 trend filter |
+| Savitzky-Golay | Smoothing spline with GCV (penalty chosen from the data) |
+| Local polynomial | LOESS with `robust=True` *(the default)* |
+| Smoothing spline at fixed `penalty` | L1 trend filter |
+| LOESS with `robust=False` | |
 | Naive differencing | |
 
 The declaration is enforced. A smoother that claims to be linear has its operator
@@ -44,8 +44,8 @@ replicates on a known trend:
 | Savitzky-Golay, window 21 | 1.010 | 0.950 | 0.950 |
 | Naive differencing | 1.001 | 0.949 | 0.949 |
 | Local polynomial, bw 0.15 | 1.008 | 0.947 | **0.043** |
-| Penalized spline, λ=5·10⁴ | 1.018 | 0.952 | **0.056** |
-| LOESS, frac 0.3 | 1.026 | 0.952 | **0.089** |
+| Smoothing spline, λ=5·10⁴ | 1.018 | 0.952 | **0.056** |
+| LOESS, span 0.3 | 1.026 | 0.952 | **0.089** |
 
 The variance is right in every row. The last column collapses only where the
 bandwidth oversmooths — the interval is correctly sized and centered in the wrong
@@ -59,7 +59,7 @@ size**. Pass `noise='ar1'`:
 ```python
 from incline import sgolay_trend
 
-result = sgolay_trend(df, se=True, noise="ar1")
+result = sgolay_trend(df, with_uncertainty=True, noise="ar1")
 ```
 
 The autocorrelation is estimated from second differences of the raw series, never
@@ -67,12 +67,22 @@ from the smoother's residuals — smoothing strips the low-frequency noise along
 with the trend, and residual-based estimates of φ come out around 0.21 when the
 truth is 0.7.
 
+For an adaptive smoothing spline, the fitted covariance also enters the point
+fit: the roughness penalty is selected by covariance-aware generalized maximum
+likelihood and the curve is fit by penalized generalized least squares. Its
+bootstrap draws Gaussian errors from that covariance and repeats covariance and
+penalty estimation in every replicate. This follows the correlated-spline
+framework of [Diggle and Hutchinson (1989)](https://doi.org/10.1111/j.1467-842X.1989.tb00510.x)
+and [Wang (1998)](https://doi.org/10.1080/01621459.1998.10474115).
+
 ## Pointwise versus whole-curve
 
 A 95% pointwise interval fails somewhere along a 130-point curve far more often
-than 5% of the time. `simultaneous=True` widens to a band that covers the whole
-curve at once — for the explorer's default series that multiplier is 3.46 rather
-than 1.96.
+than 5% of the time. For fixed linear smoothers, `simultaneous=True` widens to
+a band that covers the whole curve at once — for the explorer's default series
+that multiplier is 3.46 rather than 1.96. Bootstrap and native-posterior
+smoothers reject this option because they do not provide a validated
+whole-curve band.
 
 ## The columns
 
@@ -81,15 +91,15 @@ error:
 
 ```
 derivative_value      the point estimate
-derivative_se         NaN when unavailable
-derivative_ci_lower   NaN when derivative_se is NaN
+derivative_standard_error         NaN when unavailable
+derivative_ci_lower   NaN when derivative_standard_error is NaN
 derivative_ci_upper
-se_method             'operator' | 'native' | 'bootstrap' | None
+uncertainty_method             'operator' | 'native' | 'bootstrap' | None
 significant_trend     False when no interval exists
 ```
 
-`derivative_se` of NaN with `se_method` of None is a deliberate, documented state.
+`derivative_standard_error` of NaN with `uncertainty_method` of None is a deliberate, documented state.
 It is never a missing column, so downstream code can always index it.
 
-Standard errors are opt-in via `se=True`: the exact route costs one smoother
+Standard errors are opt-in via `with_uncertainty=True`: the exact route costs one smoother
 evaluation per observation, and that should be a choice rather than a surprise.

@@ -14,7 +14,7 @@ df = pd.DataFrame(
     index=pd.date_range("2020-01-01", periods=100),
 )
 
-result = sgolay_trend(df, window_length=15, function_order=3)
+result = sgolay_trend(df, window_length=15, degree=3)
 result[["smoothed_value", "derivative_value"]].head()
 ```
 
@@ -23,19 +23,19 @@ The derivative is reported **per unit of the time axis** — per day for a daily
 
 ## Ask for uncertainty
 
-An estimate without a standard error is hard to act on. Pass `se=True`:
+An estimate without a standard error is hard to act on. Pass `with_uncertainty=True`:
 
 ```python
-result = sgolay_trend(df, se=True)
+result = sgolay_trend(df, with_uncertainty=True)
 
 result[
     [
         "derivative_value",
-        "derivative_se",
+        "derivative_standard_error",
         "derivative_ci_lower",
         "derivative_ci_upper",
         "significant_trend",
-        "se_method",
+        "uncertainty_method",
     ]
 ].head()
 ```
@@ -56,16 +56,16 @@ Every estimator returns the same columns, whichever method produced them:
 | `derivative_value` | Its derivative, per unit time |
 | `derivative_method` | Which smoother ran |
 | `derivative_order` | Which derivative this is |
-| `derivative_se` | Standard error, or NaN |
+| `derivative_standard_error` | Standard error, or NaN |
 | `derivative_ci_lower` / `_upper` | Interval bounds, or NaN |
-| `se_method` | `operator`, `native`, `bootstrap`, or None |
+| `uncertainty_method` | `operator`, `native`, `bootstrap`, or None |
 | `significant_trend` | Whether the interval excludes zero |
 
-A NaN standard error paired with `se_method` of None is a deliberate, documented
+A NaN standard error paired with `uncertainty_method` of None is a deliberate, documented
 state — never a missing column — so downstream code can always index it.
 
 Smoothers add their own settings as extra columns: `window_length` for
-Savitzky-Golay, `bandwidth` for LOESS and local polynomials, and so on.
+Savitzky-Golay, `span` for LOESS, `bandwidth` for local polynomials, and so on.
 
 ## Choosing a method
 
@@ -75,25 +75,39 @@ from incline import (
     sgolay_trend,  # local polynomial on a fixed window
     local_polynomial_trend,  # kernel-weighted local regression
     loess_trend,  # LOESS
-    pspline_trend,  # penalized smoothing spline
-    spline_trend,  # knot-selecting smoothing spline
+    smoothing_spline_trend,  # cubic smoothing spline
     l1_trend_filter,  # piecewise-polynomial with sparse kinks
     gp_trend,  # Gaussian process
     kalman_trend,  # local linear trend state-space model
 )
 ```
 
-If you have no strong preference, let the package pick:
+If you have no strong preference, use the default smoothing spline:
 
 ```python
-from incline import estimate_trend, select_trend_method
+from incline import estimate_trend
 
-print(select_trend_method(df))  # e.g. 'loess'
-result = estimate_trend(df, method="auto", se=True)
+result = estimate_trend(df, with_uncertainty=True)
 ```
 
-Pass `criteria="exact"` to `select_trend_method` to require a method whose
-standard errors are exact rather than bootstrapped.
+Pass `method=` explicitly when the scientific question calls for another
+smoother. For example, use `method="local_poly"` for a fixed local-polynomial
+operator or `method="l1_filter"` for piecewise-polynomial trends with sparse
+kinks.
+
+L1 trend filtering requires an explicit smoothing choice. Use an absolute
+`penalty`, or use `penalty_fraction` to express it relative to the exact
+polynomial-saturation threshold:
+
+```python
+piecewise = l1_trend_filter(
+    df,
+    penalty_fraction=chosen_penalty_fraction,
+)
+```
+
+Select the penalty against the feature scale and out-of-sample behavior you
+care about; the package does not hide an arbitrary choice behind a default.
 
 ## Second derivatives
 
@@ -110,7 +124,7 @@ When the index is not the time axis:
 
 ```python
 df = pd.DataFrame({"t": [0.0, 1.5, 2.0, 4.5], "value": [1.0, 2.0, 2.5, 5.0]})
-result = sgolay_trend(df, column_value="value", time_column="t")
+result = sgolay_trend(df, value_column="value", time_column="t")
 ```
 
 ## Correlated errors
@@ -120,7 +134,7 @@ is common in real series — that assumption reports standard errors substantial
 smaller than they should be:
 
 ```python
-result = sgolay_trend(df, se=True, noise="ar1")
+result = sgolay_trend(df, with_uncertainty=True, noise="ar1")
 ```
 
 See [Uncertainty](uncertainty.md) for what that costs and what it buys.
@@ -131,12 +145,12 @@ See [Uncertainty](uncertainty.md) for what that costs and what it buys.
 from incline import trending, estimate, SavitzkyGolay
 
 estimates = {
-    name: estimate(SavitzkyGolay(), series, se=True)
+    name: estimate(SavitzkyGolay(), series, with_uncertainty=True)
     for name, series in your_series.items()
 }
 
-ranked = trending(estimates, k=5, how="mean")
-ranked[["id", "trend", "trend_se", "significant", "rank"]]
+ranked = trending(estimates, window_length=5, aggregation="mean")
+ranked[["id", "trend", "trend_standard_error", "significant", "rank"]]
 ```
 
 Standard errors computed upstream are carried through, so the ranking can tell

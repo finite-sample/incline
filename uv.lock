@@ -107,7 +107,7 @@ name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
@@ -608,7 +608,7 @@ wheels = [
 
 [[package]]
 name = "incline"
-version = "1.0.0"
+version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
@@ -621,6 +621,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "coverage" },
     { name = "pre-commit" },
     { name = "pydoclint" },
     { name = "pyright" },
@@ -639,6 +640,7 @@ docs = [
     { name = "sphinx-copybutton" },
 ]
 test = [
+    { name = "coverage" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "simcheck" },
@@ -656,6 +658,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "coverage", specifier = ">=7.9" },
     { name = "pre-commit", specifier = ">=4" },
     { name = "pydoclint", specifier = ">=0.5" },
     { name = "pyright", specifier = ">=1.1.390" },
@@ -674,6 +677,7 @@ docs = [
     { name = "sphinx-copybutton" },
 ]
 test = [
+    { name = "coverage", specifier = ">=7.9" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-cov", specifier = ">=6" },
     { name = "simcheck", git = "https://github.com/finite-sample/simcheck" },

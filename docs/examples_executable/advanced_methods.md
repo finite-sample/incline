@@ -36,8 +36,8 @@ truth = 0.02 * t + 2 * np.sin(t / 25)
 true_slope = 0.02 + 2 * np.cos(t / 25) / 25
 df = pd.DataFrame({"value": truth + rng.normal(0, 0.5, n)}, index=index)
 
-gp = gp_trend(df, kernel="rbf", se=True)
-gp[["derivative_value", "derivative_se", "se_method"]].head()
+gp = gp_trend(df, kernel="rbf", with_uncertainty=True)
+gp[["derivative_value", "derivative_standard_error", "uncertainty_method"]].head()
 ```
 
 ```{jupyter-execute}
@@ -66,11 +66,11 @@ Asking for one it does not have raises rather than returning a number.
 
 ```{jupyter-execute}
 for kernel in ("rbf", "matern32", "matern52"):
-    result = gp_trend(df, kernel=kernel, se=True)
-    print(f"{kernel:9s} median se = {result['derivative_se'].median():.4f}")
+    result = gp_trend(df, kernel=kernel, with_uncertainty=True)
+    print(f"{kernel:9s} median se = {result['derivative_standard_error'].median():.4f}")
 
 try:
-    gp_trend(df, kernel="matern32", derivative_order=2, se=True)
+    gp_trend(df, kernel="matern32", derivative_order=2, with_uncertainty=True)
 except ValueError as exc:
     print(f"\nmatern32, order 2 -> {exc}")
 ```
@@ -87,7 +87,7 @@ regime = np.concatenate([
 ])
 regime_df = pd.DataFrame({"value": regime + rng.normal(0, 0.25, n)}, index=index)
 
-kalman = kalman_trend(regime_df, se=True)
+kalman = kalman_trend(regime_df, with_uncertainty=True)
 
 fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
 axes[0].plot(t, regime_df["value"], ".", color="0.6", ms=3, label="observed")
@@ -133,9 +133,9 @@ Any smoother can then be applied to the adjusted series:
 
 ```{jupyter-execute}
 adjusted = trend_with_deseasonalization(
-    seasonal_df, SavitzkyGolay(window_length=21), se=True
+    seasonal_df, SavitzkyGolay(window_length=21), with_uncertainty=True
 )
-print(adjusted[["derivative_value", "derivative_se", "se_method"]].iloc[100])
+print(adjusted[["derivative_value", "derivative_standard_error", "uncertainty_method"]].iloc[100])
 ```
 
 ```{admonition} What that interval covers
@@ -144,7 +144,7 @@ print(adjusted[["derivative_value", "derivative_se", "se_method"]].iloc[100])
 The seasonal component was estimated from the same data as the trend, so
 treating it as known would make the interval about 10% too narrow. Asking for a
 standard error here therefore bootstraps the whole pipeline -- decomposition and
-trend fit together -- which is why `se_method` reads `pipeline_bootstrap`.
+trend fit together -- which is why `uncertainty_method` reads `pipeline_bootstrap`.
 ```
 
 ## Multi-scale analysis
@@ -177,7 +177,7 @@ for direction, spans in regions.items():
 
 ```{jupyter-execute}
 methods = {
-    "Savitzky-Golay": SavitzkyGolay(window_length=21, polyorder=3),
+    "Savitzky-Golay": SavitzkyGolay(window_length=21, degree=3),
     "local polynomial": LocalPolynomial(bandwidth=0.15, degree=2),
     "Gaussian process": GaussianProcess(n_restarts=0),
     "state space": StateSpace(),
@@ -186,12 +186,12 @@ methods = {
 fig, ax = plt.subplots(figsize=(10, 5))
 rows = []
 for label, smoother in methods.items():
-    result = estimate(smoother, df, se=True)
+    result = estimate(smoother, df, with_uncertainty=True)
     ax.plot(t, result.derivative, lw=1.6, label=label)
     rows.append({
         "method": label,
-        "se_method": result.provenance.se_method,
-        "median se": float(np.nanmedian(result.se)),
+        "uncertainty_method": result.provenance.uncertainty_method,
+        "median se": float(np.nanmedian(result.standard_error)),
         "share significant": float(result.significant.mean()),
     })
 
@@ -204,7 +204,7 @@ plt.tight_layout()
 pd.DataFrame(rows)
 ```
 
-The `se_method` column is the point. `operator` means the estimator is a fixed
+The `uncertainty_method` column is the point. `operator` means the estimator is a fixed
 linear map of the data and its variance is exact; `native` means it is a
 probability model that already knew its own posterior; `bootstrap` means neither
 applied and the sampling distribution had to be simulated.
@@ -225,8 +225,8 @@ for i in range(1, n):
 
 correlated = pd.DataFrame({"value": 0.01 * t + noise}, index=index)
 
-independent = sgolay_trend(correlated, window_length=21, se=True, noise="iid")
-modeled = sgolay_trend(correlated, window_length=21, se=True, noise="ar1")
+independent = sgolay_trend(correlated, window_length=21, with_uncertainty=True, noise="iid")
+modeled = sgolay_trend(correlated, window_length=21, with_uncertainty=True, noise="ar1")
 
 fig, ax = plt.subplots(figsize=(10, 4.5))
 ax.fill_between(
