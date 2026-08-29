@@ -222,6 +222,8 @@ def test_uncertainty_accounts_for_the_seasonal_fit_by_default():
         random_state=1,
     )
     assert result["uncertainty_method"].iloc[0] == "pipeline_bootstrap"
+    assert result["confidence_level"].eq(0.95).all()
+    assert not result["simultaneous"].any()
 
 
 def test_no_bootstrap_cost_when_no_standard_error_is_asked_for():
@@ -231,6 +233,8 @@ def test_no_bootstrap_cost_when_no_standard_error_is_asked_for():
     )
     assert result["derivative_standard_error"].isna().all()
     assert result["uncertainty_method"].iloc[0] is None
+    assert result["confidence_level"].isna().all()
+    assert not result["simultaneous"].any()
 
 
 def test_it_works_with_any_smoother():
@@ -281,6 +285,21 @@ def test_pipeline_bootstrap_honors_confidence_level():
     assert wide_width > 2.0 * narrow_width, (
         f"50% width {narrow_width:.5f} vs 99% width {wide_width:.5f}"
     )
+    assert narrow["confidence_level"].eq(0.50).all()
+    assert wide["confidence_level"].eq(0.99).all()
+
+
+def test_pipeline_bootstrap_rejects_unimplemented_simultaneous_bands():
+    """Pointwise pipeline percentiles must not be labeled simultaneous."""
+    with pytest.raises(ValueError, match="does not support simultaneous"):
+        trend_with_deseasonalization(
+            seasonal_series(),
+            SavitzkyGolay(window_length=21),
+            with_uncertainty=True,
+            simultaneous=True,
+            n_bootstrap=20,
+            random_state=1,
+        )
 
 
 def test_pure_noise_is_not_uniformly_significant():

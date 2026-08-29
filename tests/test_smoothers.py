@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from incline.axis import TimeAxis
-from incline.noise import AR1, IID
+from incline.noise import AR1, IID, Given
 from incline.result import TrendEstimate
 from incline.smoothers import (
     SMOOTHERS,
@@ -51,6 +51,11 @@ NONLINEAR = [
     pytest.param(L1TrendFilter(penalty_fraction=0.2), id="l1"),
 ]
 
+GIVEN_NONLINEAR = [
+    pytest.param(Loess(span=0.35, robust=True), id="loess_robust"),
+    pytest.param(L1TrendFilter(penalty_fraction=0.2), id="l1"),
+]
+
 
 def build_for_test(name: str):
     """Build registry entries with an explicit L1 smoothing choice."""
@@ -71,6 +76,42 @@ def test_unknown_smoother_name_lists_the_alternatives():
     """A typo should tell you what was available."""
     with pytest.raises(ValueError, match="Unknown method"):
         build("savitsky_golay")
+
+
+def test_naive_difference_fit_rejects_one_observation():
+    """The structured fit must reject an undefined derivative before computing."""
+    with pytest.raises(ValueError, match=r"naive.*at least 2 observations"):
+        NaiveDifference().fit(TimeAxis.positional(1), np.array([3.0]))
+
+
+def test_naive_difference_evaluate_rejects_one_observation():
+    """Direct evaluation must enforce the same sample-size contract as fit."""
+    with pytest.raises(ValueError, match=r"naive.*at least 2 observations"):
+        NaiveDifference().evaluate(
+            TimeAxis.positional(1), np.array([3.0]), derivative_order=1
+        )
+
+
+def test_naive_difference_operator_rejects_one_observation():
+    """An undefined finite-difference operator must not be represented by NaN."""
+    with pytest.raises(ValueError, match=r"naive.*at least 2 observations"):
+        NaiveDifference().analytic_operators(TimeAxis.positional(1), 1)
+
+
+def test_naive_difference_matches_the_two_point_finite_difference():
+    """The smallest valid series has the exact forward/backward slope at both ends."""
+    axis = TimeAxis.positional(2)
+    values = np.array([2.0, 5.0])
+    smoother = NaiveDifference()
+
+    estimate = smoother.fit(axis, values)
+    smoothing, derivative = smoother.analytic_operators(axis, 1)
+
+    np.testing.assert_array_equal(estimate.values, values)
+    np.testing.assert_array_equal(estimate.derivative, np.array([3.0, 3.0]))
+    np.testing.assert_array_equal(smoothing, np.eye(2))
+    np.testing.assert_array_equal(derivative, np.array([[-1.0, 1.0], [-1.0, 1.0]]))
+    np.testing.assert_array_equal(derivative @ values, estimate.derivative)
 
 
 @pytest.mark.parametrize("smoother", LINEAR)
@@ -130,6 +171,7 @@ def test_fit_without_se_leaves_uncertainty_honestly_empty(name):
     assert estimate.has_uncertainty is False
     assert not estimate.significant.any()
     assert estimate.provenance.uncertainty_method is None
+    assert estimate.confidence_level is None
 
 
 @pytest.mark.parametrize("name", ALL_NAMES)
@@ -148,6 +190,7 @@ def test_fit_with_se_labels_its_route(name):
     else:
         expected = "bootstrap"
     assert estimate.provenance.uncertainty_method == expected
+    assert estimate.confidence_level == pytest.approx(0.95)
 
 
 @pytest.mark.parametrize("smoother", LINEAR)
@@ -218,7 +261,10 @@ def test_smoothing_spline_tunes_for_correlated_errors():
     )
     assert correlated_rmse < 0.4 * ordinary_rmse
     assert correlated.provenance.noise is not None
-    assert correlated.provenance.params["selected_penalty"] > 0
+    assert correlated.provenance.params["generalized_penalty"] > 0
+    assert correlated.provenance.params["penalty"] is None
+    assert correlated.provenance.params["selection_method"] == "gml"
+    assert "selected_penalty" not in correlated.provenance.params
 
 
 def test_correlated_smoothing_spline_preserves_its_linear_null_space():
@@ -249,7 +295,7 @@ def test_correlated_smoothing_spline_matches_penalized_gls():
         derivative_order=1,
         noise=AR1(phi=0.6, standard_deviation=0.3),
     )
-    penalty = estimate.provenance.params["selected_penalty"]
+    penalty = estimate.provenance.params["generalized_penalty"]
     precision = np.linalg.inv(covariance)
     expected = np.linalg.solve(
         precision + penalty * _natural_spline_penalty(AXIS),
@@ -257,6 +303,27 @@ def test_correlated_smoothing_spline_matches_penalized_gls():
     )
 
     np.testing.assert_allclose(estimate.values, expected, rtol=2e-9, atol=2e-9)
+
+
+def test_generalized_penalty_is_conditional_on_covariance_scale():
+    """The GML diagnostic is not SciPy's fixed independent-error penalty."""
+    values = noisy(19)
+    base = SmoothingSpline().fit(
+        AXIS,
+        values,
+        noise=AR1(phi=0.6, standard_deviation=0.3),
+    )
+    rescaled = SmoothingSpline().fit(
+        AXIS,
+        values,
+        noise=AR1(phi=0.6, standard_deviation=0.6),
+    )
+
+    np.testing.assert_allclose(base.values, rescaled.values, rtol=0, atol=3e-12)
+    assert rescaled.provenance.params["generalized_penalty"] == pytest.approx(
+        base.provenance.params["generalized_penalty"] / 4,
+        rel=1e-10,
+    )
 
 
 SMOOTHING_LINEAR = [p for p in LINEAR if p.id != "naive"]
@@ -280,6 +347,79 @@ def test_correlated_noise_widens_a_smoother_interval(smoother):
     assert np.nanmean(correlated.standard_error) > np.nanmean(
         independent.standard_error
     )
+
+
+@pytest.mark.parametrize("smoother", GIVEN_NONLINEAR)
+def test_given_covariance_controls_a_nonlinear_bootstrap(smoother):
+    """Off-diagonal covariance must survive every nonlinear bootstrap refit."""
+    n = 60
+    axis = TimeAxis.positional(n)
+    x = axis.x
+    sigma = 0.4
+    phi = 0.8
+    covariance = sigma**2 * phi ** np.abs(np.subtract.outer(np.arange(n), np.arange(n)))
+    diagonal = np.diag(np.diag(covariance))
+    observed = (
+        0.04 * x
+        + 0.7 * np.sin(x / 12)
+        + np.random.default_rng(828).multivariate_normal(np.zeros(n), covariance)
+    )
+
+    full = smoother.fit(
+        axis,
+        observed,
+        with_uncertainty=True,
+        noise=Given(covariance),
+        n_bootstrap=300,
+        random_state=12,
+    )
+    repeated = smoother.fit(
+        axis,
+        observed,
+        with_uncertainty=True,
+        noise=Given(covariance),
+        n_bootstrap=300,
+        random_state=12,
+    )
+    independent = smoother.fit(
+        axis,
+        observed,
+        with_uncertainty=True,
+        noise=Given(diagonal),
+        n_bootstrap=300,
+        random_state=12,
+    )
+
+    np.testing.assert_array_equal(full.standard_error, repeated.standard_error)
+    interior = slice(10, -10)
+    ratio = np.mean(full.standard_error[interior]) / np.mean(
+        independent.standard_error[interior]
+    )
+    assert ratio > 1.5, (
+        f"{smoother.name}: dropping all covariance changed mean SE by only {ratio:.3f}x"
+    )
+
+
+@pytest.mark.parametrize("smoother", GIVEN_NONLINEAR)
+def test_nonlinear_bootstrap_accepts_singular_given_covariance(smoother):
+    """Given promises positive-semidefinite covariance, including low rank."""
+    n = 60
+    axis = TimeAxis.positional(n)
+    x = axis.x
+    factors = np.column_stack([np.sin(x / 9), np.cos(x / 13)])
+    covariance = 0.08 * factors @ factors.T
+    observed = 0.04 * x + 0.7 * np.sin(x / 12)
+
+    estimate = smoother.fit(
+        axis,
+        observed,
+        with_uncertainty=True,
+        noise=Given(covariance),
+        n_bootstrap=40,
+        random_state=12,
+    )
+
+    assert np.all(np.isfinite(estimate.standard_error))
 
 
 def test_correlated_noise_narrows_a_differencing_interval():
@@ -819,6 +959,12 @@ def test_whole_curve_band_is_wider_than_pointwise(smoother):
     width_whole = np.nanmean(whole.ci_upper - whole.ci_lower)
     assert width_whole > width_point
     assert whole.provenance.simultaneous
+    pointwise_frame = pointwise.to_frame()
+    whole_frame = whole.to_frame()
+    assert tuple(pointwise_frame.columns) == tuple(whole_frame.columns)
+    assert not pointwise_frame["simultaneous"].any()
+    assert whole_frame["simultaneous"].all()
+    assert whole_frame["confidence_level"].eq(0.95).all()
 
 
 @pytest.mark.parametrize("name", ALL_NAMES)

@@ -8,6 +8,7 @@ you reach for.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import partial
 
 import numpy as np
@@ -25,6 +26,16 @@ ESTIMATORS = [
     pytest.param(api.naive_trend, id="naive"),
     pytest.param(api.sgolay_trend, id="sgolay"),
     pytest.param(api.smoothing_spline_trend, id="smoothing_spline"),
+    pytest.param(api.loess_trend, id="loess"),
+    pytest.param(api.local_polynomial_trend, id="local_poly"),
+    pytest.param(L1_ESTIMATOR, id="l1_filter"),
+    pytest.param(api.gp_trend, id="gp"),
+    pytest.param(api.kalman_trend, id="kalman"),
+]
+
+NOISE_REQUIRES_UNCERTAINTY = [
+    pytest.param(api.naive_trend, id="naive"),
+    pytest.param(api.sgolay_trend, id="sgolay"),
     pytest.param(api.loess_trend, id="loess"),
     pytest.param(api.local_polynomial_trend, id="local_poly"),
     pytest.param(L1_ESTIMATOR, id="l1_filter"),
@@ -53,6 +64,14 @@ def test_every_estimator_accepts_a_datetime_index(estimator):
     assert result["derivative_value"].notna().sum() > N // 2
 
 
+def test_naive_trend_rejects_one_observation():
+    """A finite difference needs two distinct observations."""
+    data = pd.DataFrame({"value": [3.0]})
+
+    with pytest.raises(ValueError, match=r"naive.*at least 2 observations"):
+        api.naive_trend(data)
+
+
 @pytest.mark.parametrize("estimator", ESTIMATORS)
 def test_every_estimator_returns_the_core_schema(estimator):
     """One contract, whichever method produced the numbers."""
@@ -70,6 +89,9 @@ def test_uncertainty_is_opt_in(estimator):
     assert result["uncertainty_method"].isna().all() | (
         result["uncertainty_method"].iloc[0] is None
     )
+    assert result["confidence_level"].isna().all()
+    assert not result["simultaneous"].any()
+    assert not result["bias_corrected"].any()
     assert not result["significant_trend"].any()
 
 
@@ -80,6 +102,8 @@ def test_se_true_fills_in_the_uncertainty(estimator):
     assert result["derivative_standard_error"].notna().any()
     assert result["derivative_ci_lower"].notna().any()
     assert result["uncertainty_method"].iloc[0] in {"operator", "bootstrap", "native"}
+    assert result["confidence_level"].eq(0.95).all()
+    assert not result["simultaneous"].any()
 
 
 @pytest.mark.parametrize("estimator", ESTIMATORS)
@@ -142,6 +166,8 @@ def test_wider_confidence_level_widens_the_interval(estimator):
     ).mean()
     wide_width = (wide["derivative_ci_upper"] - wide["derivative_ci_lower"]).mean()
     assert wide_width > narrow_width
+    assert narrow["confidence_level"].eq(0.5).all()
+    assert wide["confidence_level"].eq(0.99).all()
 
 
 @pytest.mark.parametrize("estimator", ESTIMATORS)
@@ -245,6 +271,9 @@ def test_pilot_scale_reaches_bias_correction_through_both_public_routes():
     np.testing.assert_allclose(
         tabular["derivative_value"], structured.derivative, equal_nan=True
     )
+    assert tabular["bias_corrected"].all()
+    assert tabular["confidence_level"].eq(0.95).all()
+    assert not tabular["simultaneous"].any()
 
 
 def test_estimate_returns_the_structured_object():
@@ -266,16 +295,39 @@ def test_estimate_preserves_the_source_index_without_the_source_frame():
     pd.testing.assert_index_equal(result.index, data.index)
 
 
+def test_smoother_params_cannot_overwrite_core_result_columns():
+    """Method-specific diagnostics must not corrupt the stable schema."""
+    from incline.smoothers import SavitzkyGolay
+
+    estimate = api.estimate(SavitzkyGolay(), frame())
+    broken = replace(
+        estimate,
+        provenance=replace(
+            estimate.provenance,
+            params={"confidence_level": 0.5},
+        ),
+    )
+    with pytest.raises(ValueError, match="cannot overwrite core columns"):
+        broken.to_frame()
+
+
 @pytest.mark.parametrize("estimator", ESTIMATORS)
-def test_missing_values_do_not_crash(estimator):
-    """Real series have gaps; an estimator may refuse but must not explode."""
+def test_every_estimator_rejects_missing_values(estimator):
+    """Every public estimator refuses gaps with the same actionable error."""
     data = frame(9)
     data.iloc[10:15, 0] = np.nan
-    try:
-        result = estimator(data)
-    except (ValueError, np.linalg.LinAlgError):
-        pytest.skip("this estimator declines NaN input, which is a valid answer")
-    assert len(result) == N
+    with pytest.raises(ValueError, match="5 missing values") as raised:
+        estimator(data)
+    message = str(raised.value)
+    assert "interpolate" in message
+    assert "dropna" in message
+
+
+@pytest.mark.parametrize("estimator", NOISE_REQUIRES_UNCERTAINTY)
+def test_public_estimators_reject_noise_that_cannot_affect_the_result(estimator):
+    """The functional API must not preserve an ignored estimation option."""
+    with pytest.raises(ValueError, match="noise"):
+        estimator(frame(), noise="iid")
 
 
 def test_second_derivative_is_available_where_supported():

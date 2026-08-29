@@ -351,8 +351,10 @@ def parametric_bootstrap(
     """Refit over Gaussian draws from a fitted covariance model.
 
     Unlike a residual block bootstrap, this preserves the complete covariance
-    supplied to the estimator. It is used when the covariance also participates
-    in selecting the smoother, so every replicate repeats that selection.
+    supplied to the estimator. It is used when the covariance participates in
+    selecting the smoother or when a caller supplies an arbitrary covariance
+    that residual resampling cannot preserve. The simulated errors are
+    Gaussian; the covariance alone does not specify a fuller distribution.
 
     Args:
         fitted: Smoothed values from the original fit.

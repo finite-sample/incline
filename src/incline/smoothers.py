@@ -154,6 +154,7 @@ class Smoother(ABC):
     linear: ClassVar[bool] = False
     has_native_posterior: ClassVar[bool] = False
     supported_orders: ClassVar[frozenset[int]] = frozenset({1, 2})
+    _minimum_observations: ClassVar[int] = 1
     # Whether the method's arithmetic assumes evenly spaced observations. A
     # convolution filter cannot be applied to an irregular axis and produce a
     # correct per-time derivative; it scales everything by one median step.
@@ -167,6 +168,19 @@ class Smoother(ABC):
         smoothers are linear only in certain configurations.
         """
         return self.linear
+
+    @property
+    def uses_noise_for_fit(self) -> bool:
+        """Whether a supplied noise model can change the point estimate."""
+        return False
+
+    def _require_minimum_observations(self, axis: TimeAxis) -> None:
+        """Reject an axis too short for this smoother's estimate."""
+        if axis.n < self._minimum_observations:
+            raise ValueError(
+                f"{self.name} requires at least {self._minimum_observations} "
+                f"observations; got {axis.n}"
+            )
 
     @abstractmethod
     def evaluate(
@@ -355,7 +369,8 @@ class Smoother(ABC):
             derivative_order: Derivative derivative_order.
             with_uncertainty: Whether to compute standard errors. Off by default because
                 the exact route costs one smoother evaluation per observation.
-            noise: Noise model, or ``'iid'`` / ``'ar1'``.
+            noise: Noise model instance, or ``'iid'``, ``'ar1'`, or
+                ``'heteroskedastic'``.
             bias_correct: Subtract an estimate of smoothing bias using a
                 less-smoothed pilot fit. Linear smoothers only.
             simultaneous: Return a band covering the whole curve at once
@@ -419,6 +434,7 @@ class Smoother(ABC):
             )
         if len(y) != axis.n:
             raise ValueError(f"y has {len(y)} values but the axis has {axis.n} points")
+        self._require_minimum_observations(axis)
         missing = int(np.sum(~np.isfinite(y)))
         if missing:
             # Refused here, once, for the same reason TimeAxis refuses a
@@ -449,15 +465,19 @@ class Smoother(ABC):
             # Once per fit, not once per probe evaluation.
             axis.require_regular(self.name)
 
-        if with_uncertainty and self.has_native_posterior:
-            if noise is not None:
-                raise ValueError(
-                    f"{self.name} carries its own posterior; noise is unavailable"
-                )
-            if simultaneous:
-                raise ValueError(
-                    f"{self.name} has no simultaneous whole-curve posterior band"
-                )
+        if self.has_native_posterior and noise is not None:
+            raise ValueError(
+                f"{self.name} models noise internally; noise is unavailable"
+            )
+        if noise is not None and not with_uncertainty and not self.uses_noise_for_fit:
+            raise ValueError(
+                f"{self.name} uses noise only for uncertainty; set "
+                "with_uncertainty=True or omit noise"
+            )
+        if with_uncertainty and self.has_native_posterior and simultaneous:
+            raise ValueError(
+                f"{self.name} has no simultaneous whole-curve posterior band"
+            )
         if with_uncertainty and simultaneous and not self.is_linear:
             raise ValueError(
                 f"{self.name} uses bootstrap uncertainty and does not support "
@@ -649,6 +669,15 @@ class Smoother(ABC):
             Standard errors and percentile interval bounds.
         """
         del noise_model
+        if noise_fit.explicit is not None:
+            return parametric_bootstrap(
+                fitted=estimate.values,
+                refit=lambda v: self.evaluate(axis, v, derivative_order).derivative,
+                noise=noise_fit,
+                n_bootstrap=n_bootstrap,
+                confidence_level=confidence_level,
+                random_state=random_state,
+            )
         block = _block_size(axis.n) if noise_fit.phi else None
         return residual_bootstrap(
             y=y,
@@ -912,18 +941,21 @@ class NaiveDifference(Smoother):
     The estimator the package exists to argue against: it does no smoothing,
     so it inherits the noise directly. Kept because the comparison is the
     point, and because its exact variance makes that comparison quantitative.
+    A finite difference requires at least two observations.
     """
 
     name: ClassVar[str] = "naive"
     linear: ClassVar[bool] = True
     supported_orders: ClassVar[frozenset[int]] = frozenset({1})
     requires_regular_grid: ClassVar[bool] = True
+    _minimum_observations: ClassVar[int] = 2
 
     def evaluate(
         self, axis: TimeAxis, y: npt.NDArray[np.float64], derivative_order: int
     ) -> Evaluation:
         """Average the forward and backward difference at each point."""
         del derivative_order
+        self._require_minimum_observations(axis)
         backward = np.full(axis.n, np.nan)
         forward = np.full(axis.n, np.nan)
         backward[1:] = (y[1:] - y[:-1]) / axis.delta
@@ -937,11 +969,10 @@ class NaiveDifference(Smoother):
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]] | None:
         """The difference stencil, written down directly."""
         del derivative_order
+        self._require_minimum_observations(axis)
         n = axis.n
         derivative = np.zeros((n, n), dtype=np.float64)
         step = axis.delta
-        if n == 1:
-            return np.eye(1), np.full((1, 1), np.nan)
         # Interior points average the forward and backward difference, which
         # telescopes to the central difference over two steps.
         for i in range(n):
@@ -1342,8 +1373,8 @@ def _gml_smoothing_spline(
             )
         log_scaled_penalty = float(optimum.x)
 
-    selected_penalty = float(np.exp(log_scaled_penalty) / geometric_mean)
-    shrinkage = 1.0 + selected_penalty * positive_values
+    generalized_penalty = float(np.exp(log_scaled_penalty) / geometric_mean)
+    shrinkage = 1.0 + generalized_penalty * positive_values
     coordinates[2:] /= shrinkage
     fitted_values = factor @ (eigenvectors @ coordinates)
     spline = make_interp_spline(
@@ -1359,7 +1390,7 @@ def _gml_smoothing_spline(
             dtype=np.float64,
         ),
         params={
-            "selected_penalty": selected_penalty,
+            "generalized_penalty": generalized_penalty,
             "selection_method": "gml",
         },
     )
@@ -1391,7 +1422,10 @@ class SmoothingSpline(Smoother):
         penalty conditional on the fitted :class:`~incline.noise.NoiseModel`;
         it does not jointly optimize the covariance and penalty. The independent
         fit and analytic differentiation delegate to
-        :func:`scipy.interpolate.make_smoothing_spline`.
+        :func:`scipy.interpolate.make_smoothing_spline`. The GML fit reports a
+        ``generalized_penalty`` in its provenance. That value belongs to the
+        covariance-weighted objective and is not interchangeable with the
+        public ``penalty`` argument used by the independent-error fit.
     """
 
     name: ClassVar[str] = "smoothing_spline"
@@ -1410,6 +1444,11 @@ class SmoothingSpline(Smoother):
     def is_linear(self) -> bool:
         """Linear when the penalty is fixed, not cross-validated."""
         return self.penalty is not None
+
+    @property
+    def uses_noise_for_fit(self) -> bool:
+        """Adaptive selection uses covariance; a fixed penalty does not."""
+        return self.penalty is None
 
     def evaluate(
         self, axis: TimeAxis, y: npt.NDArray[np.float64], derivative_order: int

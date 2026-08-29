@@ -589,8 +589,8 @@ def resolve_noise(spec: NoiseModel | str | None) -> NoiseModel:
     """Turn a user-facing noise argument into a NoiseModel.
 
     Args:
-        spec: A NoiseModel, the string ``'iid'`` or ``'ar1'``, or None for the
-            default.
+        spec: A NoiseModel, ``'iid'``, ``'ar1'``, ``'heteroskedastic'``, or
+            None for the default IID estimator.
 
     Returns:
         The corresponding NoiseModel.

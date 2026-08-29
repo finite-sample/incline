@@ -92,21 +92,23 @@ measured in `tests/test_bayesian_calibration.py`:
 
 | | coverage of a nominal 95% interval | reported SE ÷ actual error |
 |---|---|---|
-| Gaussian process, kernel held fixed | 0.900 | — |
-| Local linear trend, variances re-estimated | **0.800** | 0.772 |
+| Gaussian process, prior fixed exactly | 0.945 | — |
+| Local linear trend, variances re-estimated | **0.807** | 0.764 |
 
-Neither reaches nominal, for different and identified reasons.
+The Gaussian process reaches nominal Bayesian calibration. The test draws the
+function and its derivative jointly from a known prior, supplies `amplitude`,
+`length_scale`, and `noise_level` in the data's units, and sets `optimize=False`
+and `standardize=False`. The prior being conditioned on is therefore exactly
+the prior that generated the data. The 0.945 result is from 400 seeded
+replicates and passes the replicate-aware 0.95 calibration gate.
 
-The Gaussian process falls slightly short because the fit standardizes the
-response: `noise_level` and the signal amplitude end up in units of the series'
-own standard deviation rather than its original units, and the amplitude is
-fixed at 1 internally and cannot be set. A caller therefore cannot specify a
-prior exactly, so the prior being conditioned on is not quite the prior the data
-came from.
+That result is conditional on a correctly specified, fixed prior. It does not
+claim 95% frequentist coverage for the default fit, which standardizes the
+response and estimates its kernel hyperparameters from the observed series.
 
-The state-space model falls further short, and its
-intervals are **conditional on the fitted variances**, and that estimation error
-is not propagated, so they come out about a quarter too narrow.
+The state-space model remains undercalibrated. Its intervals are **conditional
+on the fitted variances**, and that estimation error is not propagated, so they
+come out about a quarter too narrow.
 
 A correction for this was implemented and then removed. It scaled the interval
 by each variance parameter's relative standard error, `bse / |param|` — which is

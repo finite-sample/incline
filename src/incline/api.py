@@ -74,7 +74,10 @@ def estimate(
         time_column: Numeric time column. The index is used when None.
         derivative_order: Which derivative to estimate.
         with_uncertainty: Whether to compute standard errors.
-        noise: Noise model, or ``'iid'`` / ``'ar1'``.
+        noise: Noise model instance, or ``'iid'``, ``'ar1'``, or
+            ``'heteroskedastic'``. Used for uncertainty; an adaptive smoothing
+            spline also uses it for the point fit. Rejected when the selected
+            route cannot use it.
         bias_correct: Subtract estimated smoothing bias. Linear smoothers only.
         simultaneous: Return a whole-curve band for a fixed linear smoother.
         confidence_level: Confidence level for intervals.
@@ -123,7 +126,8 @@ def naive_trend(
     """Estimate the trend by central finite differences.
 
     Does no smoothing, so it inherits the noise directly. Present mostly as
-    the baseline the smoothing methods are meant to beat.
+    the baseline the smoothing methods are meant to beat. Requires at least
+    two observations.
 
     Args:
         df: Time series data.
@@ -183,7 +187,9 @@ def smoothing_spline_trend(
         df: Time series data.
         value_column: Column holding the values.
         time_column: Numeric time column.
-        penalty: Roughness penalty.
+        penalty: Fixed roughness penalty for the independent-error spline. This
+            is not the covariance-dependent ``generalized_penalty`` reported
+            by an adaptive GML fit.
         **kwargs: Uncertainty options; see :func:`estimate`.
 
     Returns:

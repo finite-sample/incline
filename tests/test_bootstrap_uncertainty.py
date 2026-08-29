@@ -82,6 +82,19 @@ SMOOTH_DERIVATIVE = 0.04 * (_T - 60) / 100 + 0.05
 
 BOOTSTRAP_SMOOTHERS = ["smoothing_spline", "l1_filter"]
 
+GIVEN_N = 60
+GIVEN_POINT = 30
+GIVEN_AXIS = TimeAxis.positional(GIVEN_N)
+_GIVEN_X = GIVEN_AXIS.x
+GIVEN_TRUTH = 0.04 * _GIVEN_X + 0.7 * np.sin(_GIVEN_X / 12)
+GIVEN_SIGMA = 0.4
+GIVEN_PHI = 0.8
+GIVEN_COVARIANCE = GIVEN_SIGMA**2 * GIVEN_PHI ** np.abs(
+    np.subtract.outer(np.arange(GIVEN_N), np.arange(GIVEN_N))
+)
+GIVEN_SMOOTHERS = ["loess", "l1_filter"]
+GIVEN_BOOTSTRAP_REPLICATES = 80
+
 TIERS = [
     pytest.param(FAST_REPS, id="fast"),
     pytest.param(DEEP_REPS, id="deep", marks=pytest.mark.slow),
@@ -195,6 +208,119 @@ def expectations():
         return cache[key]
 
     return get
+
+
+def _given_smoother(name: str):
+    """Build a nonlinear smoother for the explicit-covariance study."""
+    return build(name, penalty_fraction=0.2) if name == "l1_filter" else build(name)
+
+
+@pytest.fixture(scope="module")
+def given_covariance_studies():
+    """Cache repeated-sample studies under a known full covariance."""
+    from incline.noise import Given
+
+    cache: dict[tuple[str, int], tuple] = {}
+
+    def get(name: str, reps: int):
+        key = (name, reps)
+        if key in cache:
+            return cache[key]
+
+        noise = Given(GIVEN_COVARIANCE)
+        errors = noise.estimate(GIVEN_TRUTH, GIVEN_AXIS).gaussian_draws(
+            GIVEN_N,
+            reps,
+            random_state=828,
+        )
+        estimates = np.empty(reps)
+        standard_errors = np.empty(reps)
+        lower = np.empty(reps)
+        upper = np.empty(reps)
+        for index, error in enumerate(errors):
+            estimate = _given_smoother(name).fit(
+                GIVEN_AXIS,
+                GIVEN_TRUTH + error,
+                with_uncertainty=True,
+                noise=noise,
+                n_bootstrap=GIVEN_BOOTSTRAP_REPLICATES,
+                random_state=index,
+            )
+            estimates[index] = estimate.derivative[GIVEN_POINT]
+            standard_errors[index] = estimate.standard_error[GIVEN_POINT]
+            lower[index] = estimate.ci_lower[GIVEN_POINT]
+            upper[index] = estimate.ci_upper[GIVEN_POINT]
+
+        cache[key] = estimates, standard_errors, lower, upper
+        return cache[key]
+
+    return get
+
+
+@pytest.fixture(scope="module")
+def given_covariance_expectations():
+    """Estimate each nonlinear smoother's expectation on independent draws."""
+    from incline.noise import Given
+
+    cache: dict[tuple[str, int], float] = {}
+
+    def get(name: str, reps: int) -> float:
+        key = (name, reps)
+        if key in cache:
+            return cache[key]
+
+        noise_fit = Given(GIVEN_COVARIANCE).estimate(GIVEN_TRUTH, GIVEN_AXIS)
+        errors = noise_fit.gaussian_draws(GIVEN_N, reps, random_state=1828)
+        estimates = np.empty(reps)
+        for index, error in enumerate(errors):
+            estimates[index] = (
+                _given_smoother(name)
+                .fit(
+                    GIVEN_AXIS,
+                    GIVEN_TRUTH + error,
+                )
+                .derivative[GIVEN_POINT]
+            )
+        cache[key] = float(estimates.mean())
+        return cache[key]
+
+    return get
+
+
+@pytest.mark.parametrize("name", GIVEN_SMOOTHERS)
+@pytest.mark.parametrize("reps", TIERS)
+def test_given_covariance_bootstrap_matches_the_estimators_spread(
+    name, reps, given_covariance_studies
+):
+    """Full-covariance bootstrap SE must match repeated-sample variation."""
+    estimates, standard_errors, _, _ = given_covariance_studies(name, reps)
+    ratio = float(standard_errors.mean() / estimates.std(ddof=1))
+
+    assert 0.8 < ratio < 1.2, (
+        f"{name}: full-covariance bootstrap SE is {ratio:.3f} times the "
+        "estimator's repeated-sample spread"
+    )
+
+
+@pytest.mark.parametrize("name", GIVEN_SMOOTHERS)
+@pytest.mark.parametrize("reps", TIERS)
+def test_given_covariance_interval_covers_the_estimators_expectation(
+    name,
+    reps,
+    given_covariance_studies,
+    given_covariance_expectations,
+):
+    """The percentile interval must cover its independently estimated target."""
+    _, _, lower, upper = given_covariance_studies(name, reps)
+    target = given_covariance_expectations(name, reps)
+    rate = float(np.mean((lower <= target) & (target <= upper)))
+    floor, _ = binomial_band(0.95, reps)
+
+    assert rate >= floor, (
+        f"{name}: full-covariance intervals cover their expectation only "
+        f"{rate:.3f} of the time, below the {floor:.3f} floor over {reps} "
+        "replicates"
+    )
 
 
 # --------------------------------------------------------------------------

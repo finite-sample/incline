@@ -103,7 +103,7 @@ from incline import (
     loess_trend,  # LOESS
     smoothing_spline_trend,  # cubic smoothing spline
     l1_trend_filter,  # piecewise-polynomial with sparse kinks
-    gp_trend,  # Gaussian process, exact derivative posterior
+    gp_trend,  # Gaussian process derivative posterior
     kalman_trend,  # local linear trend state-space model
 )
 ```

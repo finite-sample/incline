@@ -1,8 +1,8 @@
-# Basic Usage Examples
+# Basic usage examples
 
-This page demonstrates the core functionality of incline with executable examples that run automatically during documentation build.
+Sphinx runs every example on this page when it builds the documentation.
 
-## Quick Start: Basic Trend Estimation
+## Basic trend estimation
 
 Let's start with a simple example using sample time series data:
 
@@ -28,7 +28,7 @@ print(df.head())
 print(f"\nData shape: {df.shape}")
 ```
 
-## Method Comparison: Naive vs Spline vs Savitzky-Golay
+## Comparing naive differences, splines, and Savitzky-Golay
 
 ```{jupyter-execute}
 # Apply all three basic methods
@@ -64,7 +64,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Performance Analysis
+## Error on this simulated series
 
 ```{jupyter-execute}
 # Calculate performance metrics
@@ -99,7 +99,7 @@ print("=" * 50)
 print(performance_df.round(4))
 ```
 
-## Parameter Sensitivity Analysis
+## Sensitivity to the smoothing parameter
 
 Understanding how smoothing parameters affect results:
 
@@ -148,7 +148,7 @@ for penalty in penalties:
     print(f"penalty = {penalty:6.1f}: MSE = {mse:.4f}")
 ```
 
-## Working with Real Time Series Features
+## Trend, seasonality, noise, and outliers
 
 ```{jupyter-execute}
 # Create a more complex time series with multiple characteristics
@@ -229,26 +229,10 @@ for name, result in methods_results.items():
     print(f"{name:12s}: MSE = {mse:.3f}, Mean = {mean_trend:.3f}")
 ```
 
-## Key Takeaways
+## Choosing among these methods
 
-```{jupyter-execute}
-print("📊 BASIC USAGE SUMMARY")
-print("=" * 50)
-print()
-print("✅ Method Characteristics:")
-print("   • Naive: Fast, high variance, poor at boundaries")
-print("   • Spline: Smooth, handles irregular data, parameter sensitive")
-print("   • Savitzky-Golay: Good for regular data, edge effects")
-print()
-print("✅ Parameter Guidelines:")
-print("   • Lower smoothing = follows data more closely")
-print("   • Higher smoothing = smoother trends, less noise sensitivity")
-print("   • Window size affects boundary behavior")
-print()
-print("✅ When to Use Each Method:")
-print("   • Naive: Quick estimates, clean data")
-print("   • Spline: Irregular sampling, need smoothness")
-print("   • S-G: Regular sampling, moderate noise")
-```
-
-This completes the basic usage examples. Each code block executes during documentation build and produces static outputs for GitHub Pages.
+| Method | Useful role | Main limitation |
+|---|---|---|
+| Naive differences | An unsmoothed baseline | Amplifies noise and has one-sided boundary estimates |
+| Smoothing spline | Smooth estimates on regular or irregular axes | Results depend on the roughness penalty |
+| Savitzky-Golay | Local polynomial smoothing on a regular grid | Results depend on the window and degree |

@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 — 2026-08-28
+## 2.0.0 — 2026-08-29
 
 This release makes the public vocabulary consistent and turns validation and
 statistical behavior into tested contracts. It intentionally provides no
@@ -35,6 +35,17 @@ deprecated aliases.
   now fail instead of being ignored.
 - Preserved the covariance structure in uncertainty provenance, including
   bias-corrected fits.
+- Preserved the full supplied covariance in nonlinear parametric bootstraps,
+  including singular positive-semidefinite covariance matrices.
+- Rejected external noise models when they cannot affect either the point fit
+  or uncertainty, including all native-posterior routes.
+- Added `confidence_level`, `simultaneous` and `bias_corrected` to the stable
+  result schema, and prevented smoother diagnostics from overwriting core
+  columns.
+- Renamed the covariance-dependent GML diagnostic to `generalized_penalty` so
+  it cannot be mistaken for the public independent-error `penalty` argument.
+- Refused unsupported simultaneous seasonal-pipeline bands and finite
+  differencing on fewer than two observations.
 - Removed placeholder smoothing scales. Adaptive configurations report no
   fixed scale, and SiZer rejects estimators without a scale knob.
 - Refused simultaneous bands for bootstrap and native-posterior uncertainty,

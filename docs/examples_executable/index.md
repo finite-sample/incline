@@ -1,8 +1,10 @@
-# Executable Examples
+# Executable examples
 
-This section contains comprehensive, executable examples that demonstrate the full capabilities of the incline package. These examples use jupyter-sphinx to run code during documentation build time, generating static plots and tables for GitHub Pages.
+Sphinx executes the code in these Markdown pages when it builds the
+documentation. A code error fails the build; successful output is rendered as
+static plots and tables.
 
-## Available Examples
+## Examples
 
 ```{toctree}
 :maxdepth: 1
@@ -11,40 +13,19 @@ basic_usage
 advanced_methods
 ```
 
-## About These Examples
+## Where to start
 
-All code examples in this section are executed during documentation build using jupyter-sphinx. This means:
+Start with [basic usage](basic_usage.md) for the core estimators, smoothing
+parameters, and a comparison on simulated data.
 
-- **Static Output**: Generated plots and tables are included in the final documentation
-- **Always Current**: Examples run against the latest code during build
-- **No Runtime Dependencies**: Readers don't need Jupyter installed to view results
-- **GitHub Pages Compatible**: Works perfectly with static site hosting
+The [advanced examples](advanced_methods.md) cover Gaussian processes,
+state-space models, seasonal decomposition, and SiZer.
 
-## Getting Started
+## Build locally
 
-If you're new to incline, start with the [Basic Usage Examples](basic_usage.md) which cover:
-- Core trend estimation methods
-- Parameter selection guidelines
-- Performance comparisons
-- Real-world data handling
-
-For more sophisticated analysis, see the [Advanced Methods Examples](advanced_methods.md) which demonstrate:
-- Gaussian Process trend estimation
-- Kalman filter tracking
-- Seasonal decomposition
-- Multiscale analysis (SiZer)
-
-## Running Examples Locally
-
-To run these examples in your own environment:
+Run the same warning-as-error build used for release validation:
 
 ```bash
-# Install incline with example dependencies
-pip install incline[advanced]
-
-# Or install from source with docs dependencies
-pip install -e .[docs]
-
-# Run Jupyter to explore interactively
-jupyter notebook
+uv sync --group docs
+uv run sphinx-build -W -b html docs docs/_build/html
 ```

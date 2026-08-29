@@ -533,9 +533,19 @@ def trend_with_deseasonalization(
     Returns:
         The estimator's usual columns plus :data:`DECOMPOSITION_COLUMNS`. One
         schema, whether or not a cycle was found.
+
+    Raises:
+        ValueError: If simultaneous whole-curve uncertainty is requested. The
+            pipeline bootstrap computes pointwise intervals only.
     """
     from .api import estimate
     from .smoothers import SmoothingSpline
+
+    if fit_kwargs.get("with_uncertainty") and fit_kwargs.get("simultaneous"):
+        raise ValueError(
+            "the seasonal pipeline bootstrap does not support simultaneous "
+            "whole-curve bands"
+        )
 
     decomposed = deseasonalize(df, value_column, method, period)
     chosen = smoother if smoother is not None else SmoothingSpline()
@@ -567,6 +577,8 @@ def trend_with_deseasonalization(
             result["derivative_ci_lower"] = lower
             result["derivative_ci_upper"] = upper
             result["uncertainty_method"] = "pipeline_bootstrap"
+            result["confidence_level"] = float(fit_kwargs.get("confidence_level", 0.95))
+            result["simultaneous"] = False
             # Same rule as TrendEstimate.significant, including the positive-se
             # requirement. Writing the comparison out again here dropped that
             # guard, and on a series with no detected cycle -- where the
