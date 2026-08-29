@@ -122,7 +122,7 @@ def test_unknown_weighting_is_refused():
 
 
 def test_weighting_actually_changes_the_answer():
-    """Regression: a weighting argument that no branch honoured.
+    """Regression: a weighting argument that no branch honored.
 
     ``avg`` was rewritten to a trimmed mean before the dispatch, which cannot
     weight, so the scheme was silently ignored on that path.

@@ -281,7 +281,7 @@ def test_assuming_independence_under_autocorrelation_undercovers(reps, capsys):
 
 
 @pytest.mark.parametrize("reps", TIERS)
-def test_modelling_the_autocorrelation_repairs_most_of_it(reps, capsys):
+def test_modeling_the_autocorrelation_repairs_most_of_it(reps, capsys):
     """noise='ar1' recovers the variance, though not quite to nominal.
 
     The AR coefficient is itself estimated from a finite series, so the interval

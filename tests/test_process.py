@@ -144,7 +144,7 @@ def test_unknown_kernel_is_refused():
         GaussianProcess(kernel="rbg", n_restarts=0).fit(axis, np.sin(axis.x))
 
 
-def test_requested_length_scale_is_honoured_when_optimisation_is_off():
+def test_requested_length_scale_is_honored_when_optimization_is_off():
     """Regression: with_scale was a no-op because sklearn always re-optimized.
 
     ``n_restarts_optimizer`` controls how many restarts an optimization gets,
@@ -219,7 +219,7 @@ def test_level_is_recovered_whether_or_not_the_response_is_scaled():
         assert np.mean(values) == pytest.approx(100.0, abs=1.0)
 
 
-def test_optimisation_is_still_on_by_default():
+def test_optimization_is_still_on_by_default():
     """Leaving the kernel to be learned is the sensible default."""
     axis = TimeAxis.positional(80)
     y = np.sin(axis.x / 10) + np.random.default_rng(0).normal(0, 0.3, 80)

@@ -145,7 +145,7 @@ def test_wider_confidence_level_widens_the_interval(estimator):
 
 
 @pytest.mark.parametrize("estimator", ESTIMATORS)
-def test_custom_value_column_is_honoured(estimator):
+def test_custom_value_column_is_honored(estimator):
     """Nobody's column is called 'value'."""
     data = frame().rename(columns={"value": "price"})
     result = estimator(data, value_column="price")

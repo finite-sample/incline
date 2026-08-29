@@ -55,7 +55,7 @@ def test_reports_no_cycle_when_there_is_none():
     assert detect_seasonality(plain_series()).seasonal is False
 
 
-def test_detection_survives_a_series_too_short_to_analyse():
+def test_detection_survives_a_series_too_short_to_analyze():
     """Five points cannot support any detector."""
     tiny = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0, 5.0]})
     assert detect_seasonality(tiny).seasonal is False

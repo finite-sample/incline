@@ -373,7 +373,7 @@ def moving_average_decompose(
     if period < 2 or period >= n // 2:
         raise ValueError(f"Period {period} is unusable for a series of {n} points")
 
-    trend = _centred_average(y, period, n)
+    trend = _centered_average(y, period, n)
     detrended = y - trend
 
     seasonal = np.zeros(n)
@@ -389,7 +389,7 @@ def moving_average_decompose(
     )
 
 
-def _centred_average(
+def _centered_average(
     y: npt.NDArray[np.float64], period: int, n: int
 ) -> npt.NDArray[np.float64]:
     """Centered moving average, half-weighting the ends for even periods."""

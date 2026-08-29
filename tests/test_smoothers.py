@@ -446,7 +446,7 @@ def test_l1_filter_requires_an_explicit_penalty_choice():
 
 
 @pytest.mark.parametrize("name", SCALABLE_NAMES)
-def test_scale_round_trips_through_the_normalised_knob(name):
+def test_scale_round_trips_through_the_normalized_knob(name):
     """with_scale and scale_of must be consistent enough to sweep with."""
     smoother = build_for_test(name)
     rescaled = smoother.with_scale(0.25, AXIS)

@@ -333,7 +333,7 @@ class GaussianProcess(Smoother):
                 raise ValueError(f"Unknown kernel type: {self.kernel}")
 
         # Without standardization the response is still centered by hand: the
-        # prior mean is zero, so an uncentred series would be shrunk toward
+        # prior mean is zero, so an uncentered series would be shrunk toward
         # zero rather than toward its own level. Only the scaling is dropped.
         offset = 0.0 if self.standardize else float(np.mean(y))
 
@@ -350,7 +350,7 @@ class GaussianProcess(Smoother):
             warnings.simplefilter("ignore")
             model.fit(axis.x.reshape(-1, 1), y - offset)
         # Deliberately stashed on the sklearn estimator under an incline-
-        # namespaced name so _posterior can recover the centring offset from
+        # namespaced name so _posterior can recover the centering offset from
         # the cached model without a parallel cache keyed the same way.
         model._incline_offset = offset  # noqa: SLF001  # pyright: ignore[reportAttributeAccessIssue]
         return _remember(key, model)

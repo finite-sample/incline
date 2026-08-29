@@ -16,14 +16,14 @@ are both functions of the data. Shrinkage toward smoothness is the design, not a
 defect.
 
 What is testable is the uncertainty, and "coverage" is not one question but
-three. Coverage against the truth mixes the interval's *width*, its *centring*,
+three. Coverage against the truth mixes the interval's *width*, its *centering*,
 and the estimator's *bias*, and only the first two are the bootstrap's job. The
 tests below separate them, hardest-to-fake first:
 
 1. **se/sd** -- does the bootstrap recover the estimator's own sampling spread?
    Pure variance check, independent of any bias.
 2. **Coverage against E[f-hat]** -- does the interval cover the thing it is
-   actually centred on? Pure construction check. Must hold everywhere, including
+   actually centered on? Pure construction check. Must hold everywhere, including
    where the estimator is badly biased.
 3. **Coverage against the truth, away from features** -- 1 and 2 plus bias, in a
    region where bias is small.
@@ -245,13 +245,13 @@ def test_the_bootstrap_standard_error_matches_the_estimators_spread(
 
 
 # --------------------------------------------------------------------------
-# 2. Does the interval cover what it is centred on?
+# 2. Does the interval cover what it is centered on?
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("name", BOOTSTRAP_SMOOTHERS)
 @pytest.mark.parametrize("reps", TIERS)
-def test_the_interval_covers_the_value_it_is_centred_on(
+def test_the_interval_covers_the_value_it_is_centered_on(
     name, reps, studies, expectations
 ):
     """Coverage of E[f-hat], which isolates construction from bias.
@@ -259,7 +259,7 @@ def test_the_interval_covers_the_value_it_is_centred_on(
     An adaptive smoother is biased wherever the truth has a feature it must
     smooth over, and no interval built from the data alone knows that. Asking
     whether the interval covers its own expectation removes bias from the
-    question entirely and leaves only: is the width right and is the centring
+    question entirely and leaves only: is the width right and is the centering
     right. That must hold everywhere.
 
     E[f-hat] is estimated from an **independent** block of replicates. Using the
@@ -284,7 +284,7 @@ def test_the_interval_covers_the_value_it_is_centred_on(
     assert rate >= band[0], (
         f"{name}: the interval covers its own expectation only {rate:.3f} of the "
         f"time, below the {band[0]:.3f} floor for a nominal 0.95 over {reps} "
-        "replicates -- the interval is too narrow or is not centred on the "
+        "replicates -- the interval is too narrow or is not centered on the "
         "estimator"
     )
 
