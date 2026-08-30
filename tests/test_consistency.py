@@ -32,7 +32,7 @@ TIERS = [
 ]
 
 
-def sampling_behaviour(smoother, n, reps, sigma=SIGMA, seed=3, frequency=3.0):
+def sampling_behavior(smoother, n, reps, sigma=SIGMA, seed=3, frequency=3.0):
     """Bias, spread and mean reported error of the mid-series slope.
 
     The mean function is held fixed on [0, 1] while n grows, so more data means
@@ -95,7 +95,7 @@ def test_rmse_declines_with_sample_size(reps, capsys):
     results = []
     for n in sizes:
         smoother = sm.LocalPolynomial(bandwidth=shrinking_bandwidth(n), degree=2)
-        results.append(sampling_behaviour(smoother, n, reps))
+        results.append(sampling_behavior(smoother, n, reps))
 
     errors = [r["rmse"] for r in results]
     with capsys.disabled():
@@ -116,12 +116,12 @@ def test_rmse_declines_with_sample_size(reps, capsys):
 def test_both_bias_and_variance_shrink(reps):
     """Consistency needs both terms to vanish, not one to trade against the other."""
     sizes = sizes_for(reps)
-    small = sampling_behaviour(
+    small = sampling_behavior(
         sm.LocalPolynomial(bandwidth=shrinking_bandwidth(sizes[0]), degree=2),
         sizes[0],
         reps,
     )
-    large = sampling_behaviour(
+    large = sampling_behavior(
         sm.LocalPolynomial(bandwidth=shrinking_bandwidth(sizes[-1]), degree=2),
         sizes[-1],
         reps,
@@ -137,7 +137,7 @@ def test_standard_errors_stay_calibrated_as_n_grows(reps, capsys):
     ratios = []
     for n in sizes:
         smoother = sm.LocalPolynomial(bandwidth=shrinking_bandwidth(n), degree=2)
-        result = sampling_behaviour(smoother, n, reps)
+        result = sampling_behavior(smoother, n, reps)
         ratios.append(result["reported_se"] / result["sd"])
 
     with capsys.disabled():
@@ -162,7 +162,7 @@ def test_wider_bandwidth_lowers_variance(reps, capsys):
     perfectly plausible numbers at any single bandwidth.
     """
     spreads = [
-        sampling_behaviour(sm.LocalPolynomial(bandwidth=bw, degree=2), 120, reps)["sd"]
+        sampling_behavior(sm.LocalPolynomial(bandwidth=bw, degree=2), 120, reps)["sd"]
         for bw in BANDWIDTHS
     ]
     with capsys.disabled():
@@ -188,7 +188,7 @@ def test_wider_bandwidth_raises_bias(reps, capsys):
     the span.
     """
     biases = [
-        sampling_behaviour(
+        sampling_behavior(
             sm.LocalPolynomial(bandwidth=bw, degree=2), 120, reps, frequency=8.0
         )["bias"]
         for bw in BANDWIDTHS
@@ -219,7 +219,7 @@ def test_the_best_bandwidth_tracks_the_curvature_of_the_truth(reps, capsys):
 
     def best_bandwidth(frequency):
         errors = [
-            sampling_behaviour(
+            sampling_behavior(
                 sm.LocalPolynomial(bandwidth=bw, degree=2),
                 200,
                 reps,

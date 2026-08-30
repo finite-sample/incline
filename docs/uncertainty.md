@@ -62,18 +62,38 @@ from incline import sgolay_trend
 result = sgolay_trend(df, with_uncertainty=True, noise="ar1")
 ```
 
+`noise` is an estimation option, not a label. Without
+`with_uncertainty=True`, it is accepted only by an adaptive smoothing spline,
+where covariance changes penalty selection and the fitted curve. Fixed
+smoothers reject it because it cannot affect their point estimate. Gaussian
+process and state-space smoothers model noise internally and reject the
+external option in both modes.
+
 The autocorrelation is estimated from second differences of the raw series, never
 from the smoother's residuals — smoothing strips the low-frequency noise along
 with the trend, and residual-based estimates of φ come out around 0.21 when the
 truth is 0.7.
+
+For a nonlinear smoother, `Given(covariance)` uses a Gaussian parametric
+bootstrap: each replicate draws an error vector from the complete supplied
+covariance and refits the smoother. This preserves arbitrary off-diagonal
+dependence that residual or block resampling cannot reconstruct from one
+series. Supplying a covariance does not specify higher moments, so Gaussian
+errors are the explicit distributional assumption on this route.
 
 For an adaptive smoothing spline, the fitted covariance also enters the point
 fit: the roughness penalty is selected by covariance-aware generalized maximum
 likelihood and the curve is fit by penalized generalized least squares. Its
 bootstrap draws Gaussian errors from that covariance and repeats covariance and
 penalty estimation in every replicate. This follows the correlated-spline
-framework of [Diggle and Hutchinson (1989)](https://doi.org/10.1111/j.1467-842X.1989.tb00510.x)
-and [Wang (1998)](https://doi.org/10.1080/01621459.1998.10474115).
+framework of [Diggle and Hutchinson (1989)](https://research.lstmed.ac.uk/en/publications/on-spline-smoothing-with-autocorrelated-errors-2/)
+and [Wang (1998)](https://www.semanticscholar.org/paper/35dcd8d5289206ee5488bfd29feaac9c68569140).
+
+The GML fit reports `generalized_penalty` in its provenance and output frame.
+It is the coefficient on roughness in the covariance-weighted objective
+$ (y-f)^T \Sigma^{-1}(y-f) + \lambda f^T Kf $. Its scale therefore depends on
+the fitted covariance. It is a diagnostic, not a value to pass back through the
+public `penalty` argument, which configures SciPy's independent-error spline.
 
 ## Pointwise versus whole-curve
 
@@ -95,6 +115,9 @@ derivative_standard_error         NaN when unavailable
 derivative_ci_lower   NaN when derivative_standard_error is NaN
 derivative_ci_upper
 uncertainty_method             'operator' | 'native' | 'bootstrap' | None
+confidence_level                interval level, or NaN
+simultaneous                    whether this is a whole-curve band
+bias_corrected                  whether pilot-fit correction was applied
 significant_trend     False when no interval exists
 ```
 

@@ -92,21 +92,23 @@ measured in `tests/test_bayesian_calibration.py`:
 
 | | coverage of a nominal 95% interval | reported SE ÷ actual error |
 |---|---|---|
-| Gaussian process, kernel held fixed | 0.900 | — |
-| Local linear trend, variances re-estimated | **0.800** | 0.772 |
+| Gaussian process, prior fixed exactly | 0.945 | — |
+| Local linear trend, variances re-estimated | **0.807** | 0.764 |
 
-Neither reaches nominal, for different and identified reasons.
+The Gaussian process reaches nominal Bayesian calibration. The test draws the
+function and its derivative jointly from a known prior, supplies `amplitude`,
+`length_scale`, and `noise_level` in the data's units, and sets `optimize=False`
+and `standardize=False`. The prior being conditioned on is therefore exactly
+the prior that generated the data. The 0.945 result is from 400 seeded
+replicates and passes the replicate-aware 0.95 calibration gate.
 
-The Gaussian process falls slightly short because the fit standardizes the
-response: `noise_level` and the signal amplitude end up in units of the series'
-own standard deviation rather than its original units, and the amplitude is
-fixed at 1 internally and cannot be set. A caller therefore cannot specify a
-prior exactly, so the prior being conditioned on is not quite the prior the data
-came from.
+That result is conditional on a correctly specified, fixed prior. It does not
+claim 95% frequentist coverage for the default fit, which standardizes the
+response and estimates its kernel hyperparameters from the observed series.
 
-The state-space model falls further short, and its
-intervals are **conditional on the fitted variances**, and that estimation error
-is not propagated, so they come out about a quarter too narrow.
+The state-space model remains undercalibrated. Its intervals are **conditional
+on the fitted variances**, and that estimation error is not propagated, so they
+come out about a quarter too narrow.
 
 A correction for this was implemented and then removed. It scaled the interval
 by each variance parameter's relative standard error, `bse / |param|` — which is
@@ -119,19 +121,20 @@ Propagating hyperparameter uncertainty properly is not implemented.
 ## Seasonal adjustment costs uncertainty, and that is now counted
 
 The seasonal component is estimated from the same data as the trend, so an
-interval that treats it as known is too narrow. Measured on a linear trend with
-a twelve-period cycle:
+interval that treats it as known is too narrow. Asking
+`trend_with_deseasonalization` for a standard error therefore bootstraps the
+**whole pipeline**: it simulates the requested noise process, then redoes the
+decomposition and trend fit together. IID and heteroskedastic models resample
+standardized residuals at the fitted scale. AR(1) and supplied covariance models
+draw from their joint covariance, so dependence is not discarded.
 
-| | coverage of a nominal 95% interval | reported SE ÷ actual spread |
-|---|---|---|
-| treating the seasonal fit as exact | 0.917 | 0.861 |
-| **what `trend_with_deseasonalization` does** | 0.983 | 1.052 |
-| oracle — true seasonal component known | 0.933 | — |
-
-Asking `trend_with_deseasonalization` for a standard error bootstraps the
-**whole pipeline**: it resamples the decomposition's residuals, redoes the
-decomposition *and* the trend fit together, and takes the interval from the
-spread. It errs slightly conservative, which is the right direction.
+The release gate generates a linear trend, twelve-period cycle, and known AR(1)
+errors, then compares the mean reported standard error with the estimator's
+sampling standard deviation. With 100 fixed-seed replicates the ratio is about
+0.96 when the AR(1) model is supplied, versus 0.59 for the deliberately
+misspecified IID negative control. The full gate repeats the study 400 times.
+This checks uncertainty calibration separately from smoothing bias and interval
+centering.
 
 That costs `n_bootstrap` decompositions, and is only paid when `with_uncertainty=True`. To
 skip it, compose the two steps yourself — which states the assumption instead of

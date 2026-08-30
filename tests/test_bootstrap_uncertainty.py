@@ -16,14 +16,14 @@ are both functions of the data. Shrinkage toward smoothness is the design, not a
 defect.
 
 What is testable is the uncertainty, and "coverage" is not one question but
-three. Coverage against the truth mixes the interval's *width*, its *centring*,
+three. Coverage against the truth mixes the interval's *width*, its *centering*,
 and the estimator's *bias*, and only the first two are the bootstrap's job. The
 tests below separate them, hardest-to-fake first:
 
 1. **se/sd** -- does the bootstrap recover the estimator's own sampling spread?
    Pure variance check, independent of any bias.
 2. **Coverage against E[f-hat]** -- does the interval cover the thing it is
-   actually centred on? Pure construction check. Must hold everywhere, including
+   actually centered on? Pure construction check. Must hold everywhere, including
    where the estimator is badly biased.
 3. **Coverage against the truth, away from features** -- 1 and 2 plus bias, in a
    region where bias is small.
@@ -81,6 +81,19 @@ SMOOTH = 0.02 * (_T - 60) ** 2 / 100 + 0.05 * _T
 SMOOTH_DERIVATIVE = 0.04 * (_T - 60) / 100 + 0.05
 
 BOOTSTRAP_SMOOTHERS = ["smoothing_spline", "l1_filter"]
+
+GIVEN_N = 60
+GIVEN_POINT = 30
+GIVEN_AXIS = TimeAxis.positional(GIVEN_N)
+_GIVEN_X = GIVEN_AXIS.x
+GIVEN_TRUTH = 0.04 * _GIVEN_X + 0.7 * np.sin(_GIVEN_X / 12)
+GIVEN_SIGMA = 0.4
+GIVEN_PHI = 0.8
+GIVEN_COVARIANCE = GIVEN_SIGMA**2 * GIVEN_PHI ** np.abs(
+    np.subtract.outer(np.arange(GIVEN_N), np.arange(GIVEN_N))
+)
+GIVEN_SMOOTHERS = ["loess", "l1_filter"]
+GIVEN_BOOTSTRAP_REPLICATES = 80
 
 TIERS = [
     pytest.param(FAST_REPS, id="fast"),
@@ -197,6 +210,119 @@ def expectations():
     return get
 
 
+def _given_smoother(name: str):
+    """Build a nonlinear smoother for the explicit-covariance study."""
+    return build(name, penalty_fraction=0.2) if name == "l1_filter" else build(name)
+
+
+@pytest.fixture(scope="module")
+def given_covariance_studies():
+    """Cache repeated-sample studies under a known full covariance."""
+    from incline.noise import Given
+
+    cache: dict[tuple[str, int], tuple] = {}
+
+    def get(name: str, reps: int):
+        key = (name, reps)
+        if key in cache:
+            return cache[key]
+
+        noise = Given(GIVEN_COVARIANCE)
+        errors = noise.estimate(GIVEN_TRUTH, GIVEN_AXIS).gaussian_draws(
+            GIVEN_N,
+            reps,
+            random_state=828,
+        )
+        estimates = np.empty(reps)
+        standard_errors = np.empty(reps)
+        lower = np.empty(reps)
+        upper = np.empty(reps)
+        for index, error in enumerate(errors):
+            estimate = _given_smoother(name).fit(
+                GIVEN_AXIS,
+                GIVEN_TRUTH + error,
+                with_uncertainty=True,
+                noise=noise,
+                n_bootstrap=GIVEN_BOOTSTRAP_REPLICATES,
+                random_state=index,
+            )
+            estimates[index] = estimate.derivative[GIVEN_POINT]
+            standard_errors[index] = estimate.standard_error[GIVEN_POINT]
+            lower[index] = estimate.ci_lower[GIVEN_POINT]
+            upper[index] = estimate.ci_upper[GIVEN_POINT]
+
+        cache[key] = estimates, standard_errors, lower, upper
+        return cache[key]
+
+    return get
+
+
+@pytest.fixture(scope="module")
+def given_covariance_expectations():
+    """Estimate each nonlinear smoother's expectation on independent draws."""
+    from incline.noise import Given
+
+    cache: dict[tuple[str, int], float] = {}
+
+    def get(name: str, reps: int) -> float:
+        key = (name, reps)
+        if key in cache:
+            return cache[key]
+
+        noise_fit = Given(GIVEN_COVARIANCE).estimate(GIVEN_TRUTH, GIVEN_AXIS)
+        errors = noise_fit.gaussian_draws(GIVEN_N, reps, random_state=1828)
+        estimates = np.empty(reps)
+        for index, error in enumerate(errors):
+            estimates[index] = (
+                _given_smoother(name)
+                .fit(
+                    GIVEN_AXIS,
+                    GIVEN_TRUTH + error,
+                )
+                .derivative[GIVEN_POINT]
+            )
+        cache[key] = float(estimates.mean())
+        return cache[key]
+
+    return get
+
+
+@pytest.mark.parametrize("name", GIVEN_SMOOTHERS)
+@pytest.mark.parametrize("reps", TIERS)
+def test_given_covariance_bootstrap_matches_the_estimators_spread(
+    name, reps, given_covariance_studies
+):
+    """Full-covariance bootstrap SE must match repeated-sample variation."""
+    estimates, standard_errors, _, _ = given_covariance_studies(name, reps)
+    ratio = float(standard_errors.mean() / estimates.std(ddof=1))
+
+    assert 0.8 < ratio < 1.2, (
+        f"{name}: full-covariance bootstrap SE is {ratio:.3f} times the "
+        "estimator's repeated-sample spread"
+    )
+
+
+@pytest.mark.parametrize("name", GIVEN_SMOOTHERS)
+@pytest.mark.parametrize("reps", TIERS)
+def test_given_covariance_interval_covers_the_estimators_expectation(
+    name,
+    reps,
+    given_covariance_studies,
+    given_covariance_expectations,
+):
+    """The percentile interval must cover its independently estimated target."""
+    _, _, lower, upper = given_covariance_studies(name, reps)
+    target = given_covariance_expectations(name, reps)
+    rate = float(np.mean((lower <= target) & (target <= upper)))
+    floor, _ = binomial_band(0.95, reps)
+
+    assert rate >= floor, (
+        f"{name}: full-covariance intervals cover their expectation only "
+        f"{rate:.3f} of the time, below the {floor:.3f} floor over {reps} "
+        "replicates"
+    )
+
+
 # --------------------------------------------------------------------------
 # 1. Does the bootstrap recover the estimator's own spread?
 # --------------------------------------------------------------------------
@@ -245,13 +371,13 @@ def test_the_bootstrap_standard_error_matches_the_estimators_spread(
 
 
 # --------------------------------------------------------------------------
-# 2. Does the interval cover what it is centred on?
+# 2. Does the interval cover what it is centered on?
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("name", BOOTSTRAP_SMOOTHERS)
 @pytest.mark.parametrize("reps", TIERS)
-def test_the_interval_covers_the_value_it_is_centred_on(
+def test_the_interval_covers_the_value_it_is_centered_on(
     name, reps, studies, expectations
 ):
     """Coverage of E[f-hat], which isolates construction from bias.
@@ -259,7 +385,7 @@ def test_the_interval_covers_the_value_it_is_centred_on(
     An adaptive smoother is biased wherever the truth has a feature it must
     smooth over, and no interval built from the data alone knows that. Asking
     whether the interval covers its own expectation removes bias from the
-    question entirely and leaves only: is the width right and is the centring
+    question entirely and leaves only: is the width right and is the centering
     right. That must hold everywhere.
 
     E[f-hat] is estimated from an **independent** block of replicates. Using the
@@ -284,7 +410,7 @@ def test_the_interval_covers_the_value_it_is_centred_on(
     assert rate >= band[0], (
         f"{name}: the interval covers its own expectation only {rate:.3f} of the "
         f"time, below the {band[0]:.3f} floor for a nominal 0.95 over {reps} "
-        "replicates -- the interval is too narrow or is not centred on the "
+        "replicates -- the interval is too narrow or is not centered on the "
         "estimator"
     )
 

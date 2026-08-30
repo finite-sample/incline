@@ -59,6 +59,9 @@ Every estimator returns the same columns, whichever method produced them:
 | `derivative_standard_error` | Standard error, or NaN |
 | `derivative_ci_lower` / `_upper` | Interval bounds, or NaN |
 | `uncertainty_method` | `operator`, `native`, `bootstrap`, or None |
+| `confidence_level` | Interval confidence level, or NaN |
+| `simultaneous` | Whether the interval covers the whole curve at once |
+| `bias_corrected` | Whether pilot-fit bias correction was applied |
 | `significant_trend` | Whether the interval excludes zero |
 
 A NaN standard error paired with `uncertainty_method` of None is a deliberate, documented

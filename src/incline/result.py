@@ -27,6 +27,9 @@ CORE_COLUMNS = (
     "derivative_ci_lower",
     "derivative_ci_upper",
     "uncertainty_method",
+    "confidence_level",
+    "simultaneous",
+    "bias_corrected",
     "noise_model",
     "significant_trend",
 )
@@ -73,7 +76,8 @@ class TrendEstimate:
         standard_error: Standard error of ``derivative``, or None when unavailable.
         ci_lower: Lower interval bound, or None.
         ci_upper: Upper interval bound, or None.
-        confidence_level: Confidence level of the interval.
+        confidence_level: Confidence level of the interval, or None when no
+            interval exists.
         index: Original pandas index, preserved for ``to_frame``.
     """
 
@@ -85,7 +89,7 @@ class TrendEstimate:
     standard_error: npt.NDArray[np.float64] | None = None
     ci_lower: npt.NDArray[np.float64] | None = None
     ci_upper: npt.NDArray[np.float64] | None = None
-    confidence_level: float = 0.95
+    confidence_level: float | None = None
     index: pd.Index | None = None
 
     def __post_init__(self) -> None:
@@ -128,7 +132,11 @@ class TrendEstimate:
             and np.any(self.ci_lower > self.ci_upper)
         ):
             raise ValueError("ci_lower cannot exceed ci_upper")
-        if (
+        has_interval = self.ci_lower is not None
+        if self.confidence_level is None:
+            if has_interval:
+                raise ValueError("an interval requires confidence_level")
+        elif (
             isinstance(self.confidence_level, (bool, np.bool_))
             or not isinstance(
                 self.confidence_level, (int, float, np.integer, np.floating)
@@ -139,6 +147,8 @@ class TrendEstimate:
             raise ValueError(
                 "confidence_level must be finite and strictly between 0 and 1"
             )
+        elif not has_interval:
+            raise ValueError("confidence_level requires interval bounds")
         if self.index is not None and len(self.index) != n:
             raise ValueError(
                 f"index has length {len(self.index)} but the axis has {n} points"
@@ -182,6 +192,10 @@ class TrendEstimate:
         Returns:
             A frame carrying every column in :data:`CORE_COLUMNS`, plus the
             smoother's own parameters.
+
+        Raises:
+            ValueError: If a smoother parameter uses the name of a core result
+                column.
         """
         nan = np.full(self.axis.n, np.nan)
         columns: dict[str, Any] = {
@@ -199,9 +213,20 @@ class TrendEstimate:
                 self.ci_upper if self.ci_upper is not None else nan
             ),
             "uncertainty_method": self.provenance.uncertainty_method,
+            "confidence_level": (
+                self.confidence_level if self.confidence_level is not None else np.nan
+            ),
+            "simultaneous": self.provenance.simultaneous,
+            "bias_corrected": self.provenance.bias_corrected,
             "noise_model": self.provenance.noise,
             "significant_trend": self.significant,
         }
+        collisions = set(columns).intersection(self.provenance.params)
+        if collisions:
+            names = ", ".join(sorted(collisions))
+            raise ValueError(
+                f"provenance params cannot overwrite core columns: {names}"
+            )
         columns.update(self.provenance.params)
 
         if source is not None:

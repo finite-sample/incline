@@ -28,7 +28,7 @@ on:
   # red run means something actually changed.
   #
   # Both halves of that are pinned, which is why there is no schedule here.
-  # `uv.lock` is committed and `uv sync` honours it, so CI does not resolve
+  # `uv.lock` is committed and `uv sync` honors it, so CI does not resolve
   # newer numpy/scipy/statsmodels behind our backs; dependency updates arrive
   # as Dependabot pull requests (`package-ecosystem: "uv"`, weekly) and are
   # reviewed like any other change. Nothing moves between commits, so a

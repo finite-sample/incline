@@ -28,8 +28,9 @@ index = pd.date_range("2020-01-01", periods=n, freq="D")
 ## Gaussian process regression
 
 The derivative of a Gaussian process is itself a Gaussian process. Its posterior
-mean and variance both follow from differentiating the covariance function, so
-the standard error is exact rather than approximated.
+mean and variance both follow from differentiating the covariance function.
+The reported standard error is conditional on the fixed or fitted kernel
+hyperparameters; it does not propagate uncertainty from estimating them.
 
 ```{jupyter-execute}
 truth = 0.02 * t + 2 * np.sin(t / 25)
@@ -78,7 +79,8 @@ except ValueError as exc:
 ## State-space models
 
 In a local linear trend model the slope is a state, so its uncertainty is a
-diagonal entry of the smoother covariance — no extra machinery needed.
+diagonal entry of the smoother covariance. The interval is conditional on the
+fitted state variances.
 
 ```{jupyter-execute}
 regime = np.concatenate([
@@ -151,7 +153,8 @@ trend fit together -- which is why `uncertainty_method` reads `pipeline_bootstra
 
 A single bandwidth is a single opinion about what counts as signal. SiZer sweeps
 the bandwidth and reports, at each scale and position, whether the slope is
-distinguishable from zero. Features that persist across scales are real.
+distinguishable from zero. Persistence shows that a finding is less sensitive
+to one chosen bandwidth; it is not proof that the feature is real.
 
 ```{jupyter-execute}
 multiscale_df = pd.DataFrame(
@@ -165,7 +168,8 @@ figure = sizer_map.plot(figsize=(10, 5))
 
 Red is significantly increasing, blue significantly decreasing, pale neither.
 Because SiZer asks the smoother for its uncertainty rather than computing its
-own, the map is exactly as calibrated as the estimator underneath.
+own, each cell uses the estimator's pointwise uncertainty. The map does not
+adjust jointly across scales.
 
 ```{jupyter-execute}
 regions = sizer_map.significant_regions(min_persistence=4)
@@ -205,7 +209,8 @@ pd.DataFrame(rows)
 ```
 
 The `uncertainty_method` column is the point. `operator` means the estimator is a fixed
-linear map of the data and its variance is exact; `native` means it is a
+linear map of the data and its variance is exact conditional on the fitted or
+supplied noise covariance; `native` means it is a
 probability model that already knew its own posterior; `bootstrap` means neither
 applied and the sampling distribution had to be simulated.
 

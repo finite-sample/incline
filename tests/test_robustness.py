@@ -138,7 +138,7 @@ def test_assuming_constant_variance_fails_at_the_ends(reps, capsys):
 
 
 @pytest.mark.parametrize("reps", TIERS)
-def test_modelling_the_varying_scale_repairs_it(reps, capsys):
+def test_modeling_the_varying_scale_repairs_it(reps, capsys):
     """noise=Heteroskedastic() should restore coverage at every position."""
     results = coverage_at(
         POSITIONS, reps, lambda rng: rng.normal(0, 1, N) * RAMP, noise=Heteroskedastic()

@@ -285,7 +285,8 @@ class SiZer:
         n_scales: How many scales to generate.
         scale_range: Smallest and largest scale, as fractions of the span.
         confidence_level: Confidence level for the flags.
-        noise: Noise model passed to the smoother, or ``'iid'`` / ``'ar1'``.
+        noise: Noise model instance passed to the smoother, or ``'iid'``,
+            ``'ar1'``, or ``'heteroskedastic'``.
         simultaneous: Ask for a whole-curve band at each scale rather than
             pointwise intervals. See the note on multiplicity below.
         n_bootstrap: Bootstrap replicates for nonlinear smoothers.

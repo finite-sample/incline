@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -38,6 +40,21 @@ def test_confidence_level_must_be_strictly_between_zero_and_one(confidence_level
             VALUES,
             confidence_level=confidence_level,
         )
+
+
+def test_confidence_level_exists_exactly_when_interval_bounds_exist():
+    """Neither an unlabeled interval nor a confidence level without one is valid."""
+    estimate = SavitzkyGolay(window_length=7).fit(AXIS, VALUES)
+    with pytest.raises(ValueError, match="requires interval bounds"):
+        replace(estimate, confidence_level=0.95)
+
+    interval = estimate.with_uncertainty(
+        standard_error=np.full(AXIS.n, 0.1),
+        uncertainty_method="operator",
+        confidence_level=0.9,
+    )
+    with pytest.raises(ValueError, match="interval requires confidence_level"):
+        replace(interval, confidence_level=None)
 
 
 @pytest.mark.parametrize("n_bootstrap", [-1, 0, 1, 1.5, True])
@@ -140,6 +157,30 @@ def test_gaussian_draws_reproduce_the_fitted_ar1_covariance():
     )
 
 
+def test_gaussian_draws_reproduce_a_given_covariance():
+    """An explicit covariance controls dependence, not only marginal scale."""
+    covariance = np.array([[0.49, 0.21], [0.21, 0.25]])
+    fit = Given(covariance).estimate(np.zeros(2), TimeAxis.positional(2))
+    draws = fit.gaussian_draws(2, 50_000, random_state=723)
+
+    np.testing.assert_allclose(
+        np.cov(draws, rowvar=False, bias=True),
+        covariance,
+        rtol=0.025,
+        atol=0.005,
+    )
+
+
+def test_gaussian_draws_support_a_singular_given_covariance():
+    """Positive-semidefinite means singular covariance is a supported case."""
+    covariance = np.full((2, 2), 0.16)
+    fit = Given(covariance).estimate(np.zeros(2), TimeAxis.positional(2))
+    draws = fit.gaussian_draws(2, 2_000, random_state=723)
+
+    np.testing.assert_allclose(draws[:, 0], draws[:, 1], rtol=0, atol=1e-15)
+    assert float(np.var(draws[:, 0])) == pytest.approx(0.16, rel=0.08)
+
+
 @pytest.mark.parametrize(
     ("noise", "label"),
     [
@@ -167,18 +208,81 @@ def test_noise_provenance_names_the_actual_covariance_structure(
     assert estimate.provenance.noise.startswith(label)
 
 
-def test_irrelevant_noise_cannot_block_a_native_posterior():
+@pytest.mark.parametrize(
+    "smoother",
+    [
+        pytest.param(
+            GaussianProcess(optimize=False, n_restarts=0),
+            id="gp",
+        ),
+        pytest.param(StateSpace(), id="kalman"),
+    ],
+)
+@pytest.mark.parametrize("with_uncertainty", [False, True])
+def test_native_posterior_rejects_external_noise_in_every_mode(
+    smoother, with_uncertainty
+):
     """Reject the incompatible option before trying to fit that noise model."""
 
     class ExplodingNoise(NoiseModel):
         def estimate(self, y, axis):
             raise AssertionError("an irrelevant noise model was fitted")
 
-    smoother = GaussianProcess(optimize=False, n_restarts=0)
     with pytest.raises(ValueError, match="noise"):
         smoother.fit(
-            AXIS, np.sin(AXIS.x / 3), with_uncertainty=True, noise=ExplodingNoise()
+            AXIS,
+            np.sin(AXIS.x / 3),
+            with_uncertainty=with_uncertainty,
+            noise=ExplodingNoise(),
         )
+
+
+@pytest.mark.parametrize(
+    "smoother",
+    [
+        pytest.param(SavitzkyGolay(window_length=7), id="sgolay"),
+        pytest.param(Loess(robust=True), id="loess"),
+        pytest.param(L1TrendFilter(penalty_fraction=0.2), id="l1"),
+        pytest.param(SmoothingSpline(penalty=10.0), id="fixed_spline"),
+    ],
+)
+@pytest.mark.parametrize("noise", [IID(standard_deviation=0.2), "not-a-model"])
+def test_noise_is_rejected_when_it_cannot_affect_the_result(smoother, noise):
+    """Neither a valid nor invalid unused option may survive as provenance."""
+    with pytest.raises(ValueError, match="with_uncertainty=True or omit noise"):
+        smoother.fit(AXIS, VALUES, noise=noise)
+
+
+def test_bias_correction_cannot_bypass_unused_noise_validation():
+    """The bias-correction early return must enforce the shared contract."""
+    with pytest.raises(ValueError, match="with_uncertainty=True or omit noise"):
+        SavitzkyGolay(window_length=7).fit(
+            AXIS,
+            VALUES,
+            noise=IID(standard_deviation=0.2),
+            bias_correct=True,
+        )
+
+
+def test_adaptive_spline_uses_noise_without_requesting_uncertainty():
+    """Keep the one no-uncertainty route where covariance changes the fit."""
+    values = np.sin(AXIS.x / 3) + 0.05 * AXIS.x
+    ordinary = SmoothingSpline().fit(AXIS, values)
+    correlated = SmoothingSpline().fit(
+        AXIS,
+        values,
+        noise=AR1(phi=0.7, standard_deviation=0.2),
+    )
+
+    assert correlated.provenance.noise.startswith("ar1(")
+    assert correlated.provenance.params["selection_method"] == "gml"
+    assert not np.allclose(ordinary.values, correlated.values)
+
+
+def test_adaptive_spline_still_validates_a_noise_model_used_for_fitting():
+    """The positive route must resolve its option rather than merely allow it."""
+    with pytest.raises(ValueError, match="Unknown noise model"):
+        SmoothingSpline().fit(AXIS, VALUES, noise="not-a-model")
 
 
 @pytest.mark.parametrize(

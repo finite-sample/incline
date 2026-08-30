@@ -100,7 +100,7 @@ def monte_carlo(
         **fit_kwargs: Forwarded to ``smoother.fit``, e.g. ``noise='ar1'``.
 
     Returns:
-        The recorded sampling behaviour.
+        The recorded sampling behavior.
     """
     n = axis.n
     target = float(true_derivative[point])

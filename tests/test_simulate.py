@@ -87,7 +87,7 @@ def test_step_trend_rejects_too_few_values():
     ],
 )
 def test_noise_std_is_the_marginal_standard_deviation(label, draw):
-    """Every noise type must honour ``std`` as its marginal spread.
+    """Every noise type must honor ``std`` as its marginal spread.
 
     Previously it did not: AR(1) treated it as the innovation standard
     deviation, so at phi=0.9 the series was 2.3x wider than white noise at the
