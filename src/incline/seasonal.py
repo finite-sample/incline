@@ -504,8 +504,8 @@ def trend_with_deseasonalization(
 
     With ``with_uncertainty=True`` the uncertainty accounts for the seasonal
     fit as well as the trend fit. The standard error comes from bootstrapping
-    the **whole pipeline**, resampling the decomposition residuals and refitting
-    both the decomposition and the trend.
+    the **whole pipeline**, drawing from the requested noise process and
+    refitting both the decomposition and the trend.
 
     That costs ``n_bootstrap`` decompositions, which is the price of an honest
     number and is only paid when a standard error is asked for. If you want the
@@ -535,13 +535,24 @@ def trend_with_deseasonalization(
         schema, whether or not a cycle was found.
 
     Raises:
-        ValueError: If simultaneous whole-curve uncertainty is requested. The
-            pipeline bootstrap computes pointwise intervals only.
+        ValueError: If an argument is outside its domain or simultaneous
+            whole-curve uncertainty is requested. The pipeline bootstrap
+            computes pointwise intervals only.
+        RuntimeError: If every pipeline-bootstrap refit fails.
     """
     from .api import estimate
     from .smoothers import SmoothingSpline
 
-    if fit_kwargs.get("with_uncertainty") and fit_kwargs.get("simultaneous"):
+    requested_uncertainty = fit_kwargs.get("with_uncertainty", False)
+    requested_simultaneous = fit_kwargs.get("simultaneous", False)
+    uncertainty_flags_are_boolean = isinstance(
+        requested_uncertainty, (bool, np.bool_)
+    ) and isinstance(requested_simultaneous, (bool, np.bool_))
+    if (
+        uncertainty_flags_are_boolean
+        and requested_uncertainty
+        and requested_simultaneous
+    ):
         raise ValueError(
             "the seasonal pipeline bootstrap does not support simultaneous "
             "whole-curve bands"
@@ -550,28 +561,50 @@ def trend_with_deseasonalization(
     decomposed = deseasonalize(df, value_column, method, period)
     chosen = smoother if smoother is not None else SmoothingSpline()
 
+    point_kwargs = fit_kwargs.copy()
+    if uncertainty_flags_are_boolean and requested_uncertainty:
+        point_kwargs["with_uncertainty"] = False
+        point_kwargs["simultaneous"] = False
+        if not chosen.uses_noise_for_fit and not chosen.has_native_posterior:
+            point_kwargs.pop("noise", None)
+
     def fit_to(values: npt.NDArray[np.float64]) -> Any:
         working = df.copy()
         working[value_column] = values
-        return estimate(chosen, working, value_column, time_column, **fit_kwargs)
+        return estimate(
+            chosen,
+            working,
+            value_column,
+            time_column,
+            n_bootstrap=n_bootstrap,
+            random_state=random_state,
+            **point_kwargs,
+        )
 
     point = fit_to(decomposed["deseasonalized"].to_numpy())
     result = point.to_frame(df)
 
-    if fit_kwargs.get("with_uncertainty"):
-        lower, upper, spread = _bootstrap_pipeline(
-            df,
-            decomposed,
-            value_column,
-            time_column,
-            method,
-            period,
-            chosen,
-            fit_kwargs,
-            n_bootstrap,
-            random_state,
-            float(fit_kwargs.get("confidence_level", 0.95)),
-        )
+    if uncertainty_flags_are_boolean and requested_uncertainty:
+        try:
+            spread, lower, upper, noise_label = _bootstrap_pipeline(
+                df,
+                decomposed,
+                value_column,
+                time_column,
+                method,
+                period,
+                chosen,
+                fit_kwargs,
+                n_bootstrap,
+                random_state,
+                float(fit_kwargs.get("confidence_level", 0.95)),
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "The seasonal pipeline bootstrap failed for every replicate; "
+                "no interval can be computed."
+            ) from exc
+        result["noise_model"] = noise_label
         if spread is not None:
             result["derivative_standard_error"] = spread
             result["derivative_ci_lower"] = lower
@@ -610,39 +643,33 @@ def _bootstrap_pipeline(
     n_bootstrap: int,
     random_state: int | np.random.Generator | None,
     confidence_level: float,
-) -> tuple[Any, Any, Any]:
-    """Resample decomposition residuals and redo decomposition plus trend.
+) -> tuple[Any, Any, Any, str]:
+    """Resample the fitted noise process and redo decomposition plus trend.
 
-    Rebuilding the series from its own fitted components and resampled
-    residuals, then decomposing *again*, is what puts the seasonal fit's
-    uncertainty into the answer. Estimating the trend on a fixed adjusted series
-    cannot: that series is treated as data.
+    Rebuilding the series from its own fitted components and fitted noise, then
+    decomposing *again*, is what puts the seasonal fit's uncertainty into the
+    answer. Estimating the trend on a fixed adjusted series cannot: that series
+    is treated as data.
     """
     from .api import estimate
-    from .uncertainty import rice_sigma
+    from .axis import TimeAxis
+    from .noise import describe_noise_fit, resolve_noise
+    from .uncertainty import (
+        parametric_bootstrap,
+        residual_bootstrap,
+    )
 
-    rng = np.random.default_rng(random_state)
+    axis = TimeAxis.from_frame(df, time_column)
+    adjusted = np.asarray(decomposed["deseasonalized"], dtype=float)
+    noise_model = resolve_noise(fit_kwargs.get("noise"))
+    noise_fit = noise_model.estimate(adjusted, axis)
+    noise_label = describe_noise_fit(noise_fit)
     fitted = (
         decomposed["trend_component"].to_numpy()
         + decomposed["seasonal_component"].to_numpy()
     )
-    residuals = decomposed["residual_component"].to_numpy()
-    residuals = residuals[np.isfinite(residuals)]
-    if residuals.size == 0 or float(np.std(residuals)) <= 0.0:
-        # A decomposition that left no residual -- the "no cycle found" route
-        # returns exactly zeros -- cannot be resampled into anything.
-        return None, None, None
-    residuals = residuals - residuals.mean()
-
     observed = np.asarray(df[value_column], dtype=float)
-    spread = float(residuals.std())
-    if spread > 1e-12:
-        residuals = residuals * (rice_sigma(observed) / spread)
 
-    # The inner fits only contribute a point estimate, so asking each of them
-    # for its own uncertainty nests a bootstrap inside a bootstrap. With the
-    # The default cross-validated SmoothingSpline previously made this 100 outer x
-    # 200 inner spline fits -- about 4.7 minutes for one default call.
     inner_kwargs = {
         k: v
         for k, v in fit_kwargs.items()
@@ -654,45 +681,65 @@ def _bootstrap_pipeline(
             "random_state",
         }
     }
+    inner_kwargs["with_uncertainty"] = False
+    inner_kwargs["simultaneous"] = False
+    if not smoother.uses_noise_for_fit:
+        inner_kwargs.pop("noise", None)
 
-    draws = []
-    for _ in range(n_bootstrap):
-        resampled = fitted + rng.choice(residuals, size=len(fitted), replace=True)
+    def refit(resampled: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         replicate = df.copy()
         replicate[value_column] = resampled
-        try:
-            parts = deseasonalize(replicate, value_column, method, period)
-            working = df.copy()
-            working[value_column] = parts["deseasonalized"].to_numpy()
-            draws.append(
-                estimate(
-                    smoother, working, value_column, time_column, **inner_kwargs
-                ).derivative
-            )
-        except Exception as exc:
-            warnings.warn(
-                f"A pipeline bootstrap replicate failed ({exc}); skipping it.",
-                stacklevel=4,
-            )
-            continue
+        parts = deseasonalize(replicate, value_column, method, period)
+        working = df.copy()
+        working[value_column] = parts["deseasonalized"].to_numpy()
+        return estimate(
+            smoother,
+            working,
+            value_column,
+            time_column,
+            n_bootstrap=n_bootstrap,
+            random_state=random_state,
+            **inner_kwargs,
+        ).derivative
 
-    if not draws:
-        warnings.warn(
-            "Every pipeline bootstrap replicate failed; keeping the "
-            "decomposition-conditional standard error.",
-            stacklevel=3,
+    if (
+        noise_fit.explicit is not None
+        or noise_fit.phi != 0.0
+        or (
+            smoother.uses_noise_for_fit
+            and (
+                noise_fit.phi != 0.0
+                or (
+                    noise_fit.standard_deviation_vector is not None
+                    and not np.all(
+                        noise_fit.standard_deviation_vector
+                        == noise_fit.standard_deviation_vector[0]
+                    )
+                )
+            )
         )
-        return None, None, None
-
-    stacked = np.asarray(draws)
-    # The percentiles have to follow the requested level; hard-coding 2.5/97.5
-    # returned a 95% interval whatever the caller asked for, which silently
-    # changed significance decisions.
-    alpha = 1.0 - confidence_level
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=RuntimeWarning)
-        return (
-            np.nanpercentile(stacked, 100 * alpha / 2, axis=0),
-            np.nanpercentile(stacked, 100 * (1 - alpha / 2), axis=0),
-            np.nanstd(stacked, axis=0),
+    ):
+        spread, lower, upper = parametric_bootstrap(
+            fitted=fitted,
+            refit=refit,
+            noise=noise_fit,
+            n_bootstrap=n_bootstrap,
+            confidence_level=confidence_level,
+            random_state=random_state,
         )
+    else:
+        scale = (
+            noise_fit.standard_deviation_vector
+            if noise_fit.standard_deviation_vector is not None
+            else np.full(len(fitted), noise_fit.standard_deviation)
+        )
+        spread, lower, upper = residual_bootstrap(
+            y=observed,
+            fitted=fitted,
+            refit=refit,
+            n_bootstrap=n_bootstrap,
+            confidence_level=confidence_level,
+            random_state=random_state,
+            scale=scale,
+        )
+    return spread, lower, upper, noise_label

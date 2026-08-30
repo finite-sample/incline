@@ -44,8 +44,11 @@ deprecated aliases.
   columns.
 - Renamed the covariance-dependent GML diagnostic to `generalized_penalty` so
   it cannot be mistaken for the public independent-error `penalty` argument.
-- Refused unsupported simultaneous seasonal-pipeline bands and finite
-  differencing on fewer than two observations.
+- Made the seasonal pipeline own its uncertainty, preserve stated noise
+  covariance, validate its bootstrap count and fail instead of falling back to
+  a decomposition-conditional interval. It still refuses unsupported
+  simultaneous bands.
+- Refused finite differencing on fewer than two observations.
 - Removed placeholder smoothing scales. Adaptive configurations report no
   fixed scale, and SiZer rejects estimators without a scale knob.
 - Refused simultaneous bands for bootstrap and native-posterior uncertainty,

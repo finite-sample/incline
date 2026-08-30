@@ -86,7 +86,7 @@ fit: the roughness penalty is selected by covariance-aware generalized maximum
 likelihood and the curve is fit by penalized generalized least squares. Its
 bootstrap draws Gaussian errors from that covariance and repeats covariance and
 penalty estimation in every replicate. This follows the correlated-spline
-framework of [Diggle and Hutchinson (1989)](https://doi.org/10.1111/j.1467-842X.1989.tb00510.x)
+framework of [Diggle and Hutchinson (1989)](https://research.lstmed.ac.uk/en/publications/on-spline-smoothing-with-autocorrelated-errors-2/)
 and [Wang (1998)](https://www.semanticscholar.org/paper/35dcd8d5289206ee5488bfd29feaac9c68569140).
 
 The GML fit reports `generalized_penalty` in its provenance and output frame.

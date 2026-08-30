@@ -411,6 +411,27 @@ class NoiseFit:
         return np.sum(operator * sigma_lt.T, axis=1)
 
 
+def describe_noise_fit(noise: NoiseFit) -> str:
+    """Format a fitted noise model for result provenance.
+
+    Args:
+        noise: Fitted noise process.
+
+    Returns:
+        Stable user-facing description of the covariance used.
+    """
+    if noise.structure == "ar1":
+        return (
+            f"ar1(phi={noise.phi:.3f}, "
+            f"standard_deviation={noise.standard_deviation:.4g})"
+        )
+    if noise.structure == "heteroskedastic":
+        return "heteroskedastic"
+    if noise.structure == "given":
+        return "given_covariance"
+    return f"iid(standard_deviation={noise.standard_deviation:.4g})"
+
+
 class NoiseModel(ABC):
     """Base class for noise specifications."""
 

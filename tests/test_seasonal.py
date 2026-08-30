@@ -12,6 +12,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import incline.seasonal as seasonal_module
+from incline.noise import AR1, IID, Given, Heteroskedastic, NoiseFit
+from incline.process import GaussianProcess
 from incline.seasonal import (
     DECOMPOSITION_COLUMNS,
     Seasonality,
@@ -21,7 +24,7 @@ from incline.seasonal import (
     stl_decompose,
     trend_with_deseasonalization,
 )
-from incline.smoothers import SavitzkyGolay, SmoothingSpline
+from incline.smoothers import SavitzkyGolay, Smoother, SmoothingSpline
 
 N = 200
 
@@ -39,6 +42,24 @@ def plain_series(seed: int = 1) -> pd.DataFrame:
     t = np.arange(N, dtype=float)
     values = 0.05 * t + np.random.default_rng(seed).normal(0, 0.4, N)
     return pd.DataFrame({"value": values}, index=pd.date_range("2020-01-01", periods=N))
+
+
+def dependent_seasonal_series(n: int = 120) -> pd.DataFrame:
+    """A seasonal trend observed with known AR(1) noise."""
+    t = np.arange(n, dtype=float)
+    phi = 0.75
+    standard_deviation = 0.5
+    rng = np.random.default_rng(22)
+    errors = np.empty(n)
+    errors[0] = rng.normal(scale=standard_deviation)
+    innovation_scale = standard_deviation * np.sqrt(1 - phi**2)
+    for index in range(1, n):
+        errors[index] = phi * errors[index - 1] + rng.normal(scale=innovation_scale)
+    values = 0.025 * t + 2 * np.sin(2 * np.pi * t / 12) + errors
+    return pd.DataFrame(
+        {"value": values},
+        index=pd.date_range("2010-01-31", periods=n, freq="ME"),
+    )
 
 
 def test_detects_a_planted_cycle():
@@ -222,6 +243,7 @@ def test_uncertainty_accounts_for_the_seasonal_fit_by_default():
         random_state=1,
     )
     assert result["uncertainty_method"].iloc[0] == "pipeline_bootstrap"
+    assert result["noise_model"].iloc[0].startswith("iid(")
     assert result["confidence_level"].eq(0.95).all()
     assert not result["simultaneous"].any()
 
@@ -298,6 +320,213 @@ def test_pipeline_bootstrap_rejects_unimplemented_simultaneous_bands():
             with_uncertainty=True,
             simultaneous=True,
             n_bootstrap=20,
+            random_state=1,
+        )
+
+
+@pytest.mark.parametrize("n_bootstrap", [0, 1, 1.5, True])
+def test_pipeline_bootstrap_validates_its_own_replicate_count(n_bootstrap):
+    """The wrapper's named count must reach the shared estimator contract."""
+    with pytest.raises(ValueError, match="n_bootstrap"):
+        trend_with_deseasonalization(
+            seasonal_series(),
+            SavitzkyGolay(window_length=21),
+            with_uncertainty=True,
+            n_bootstrap=n_bootstrap,
+            random_state=1,
+        )
+
+
+def test_pipeline_owns_uncertainty_without_running_an_inner_interval(monkeypatch):
+    """No conditional interval should be computed and then overwritten."""
+
+    def reject_inner_uncertainty(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError(
+            "the seasonal point and refits must not attach uncertainty"
+        )
+
+    monkeypatch.setattr(Smoother, "_attach_uncertainty", reject_inner_uncertainty)
+    result = trend_with_deseasonalization(
+        seasonal_series(),
+        SavitzkyGolay(window_length=21),
+        with_uncertainty=True,
+        n_bootstrap=12,
+        random_state=1,
+    )
+    assert result["uncertainty_method"].eq("pipeline_bootstrap").all()
+
+
+def test_ar1_noise_reaches_fixed_smoother_pipeline_uncertainty(monkeypatch):
+    """Dependence must widen the outer bootstrap, not break every refit."""
+    original_draws = NoiseFit.gaussian_draws
+    draw_sizes = []
+
+    def tracked_draws(self, *args, **kwargs):
+        draw_sizes.append(args[1])
+        return original_draws(self, *args, **kwargs)
+
+    monkeypatch.setattr(NoiseFit, "gaussian_draws", tracked_draws)
+    data = dependent_seasonal_series()
+    common = {
+        "method": "stl",
+        "period": 12,
+        "with_uncertainty": True,
+        "n_bootstrap": 80,
+        "random_state": 9,
+    }
+    independent = trend_with_deseasonalization(
+        data,
+        SavitzkyGolay(window_length=21),
+        noise=IID(standard_deviation=0.5),
+        **common,
+    )
+    dependent = trend_with_deseasonalization(
+        data,
+        SavitzkyGolay(window_length=21),
+        noise=AR1(phi=0.75, standard_deviation=0.5),
+        **common,
+    )
+    interior = slice(20, -20)
+    independent_error = float(
+        independent["derivative_standard_error"].iloc[interior].median()
+    )
+    dependent_error = float(
+        dependent["derivative_standard_error"].iloc[interior].median()
+    )
+    assert dependent["uncertainty_method"].eq("pipeline_bootstrap").all()
+    assert dependent["noise_model"].iloc[0].startswith("ar1(phi=0.750")
+    assert dependent_error > 1.3 * independent_error
+    assert draw_sizes == [80]
+
+
+def test_heteroskedastic_noise_reaches_pipeline_uncertainty():
+    """A stated change in scale must appear in the reported standard errors."""
+    data = dependent_seasonal_series()
+    midpoint = len(data) // 2
+    scale = np.r_[np.full(midpoint, 0.15), np.full(len(data) - midpoint, 0.8)]
+    result = trend_with_deseasonalization(
+        data,
+        SavitzkyGolay(window_length=21),
+        method="stl",
+        period=12,
+        with_uncertainty=True,
+        noise=Heteroskedastic(standard_deviation=scale),
+        n_bootstrap=80,
+        random_state=9,
+    )
+    quiet_error = float(
+        result["derivative_standard_error"].iloc[15 : midpoint - 10].median()
+    )
+    noisy_error = float(
+        result["derivative_standard_error"].iloc[midpoint + 10 : -15].median()
+    )
+    assert result["noise_model"].eq("heteroskedastic").all()
+    assert noisy_error > 3 * quiet_error
+
+
+def test_given_covariance_is_preserved_by_pipeline_bootstrap():
+    """Off-diagonal covariance must affect the whole-pipeline interval."""
+    data = dependent_seasonal_series(n=72)
+    positions = np.arange(len(data))
+    independent_covariance = 0.4**2 * np.eye(len(data))
+    dependent_covariance = 0.4**2 * 0.8 ** np.abs(
+        np.subtract.outer(positions, positions)
+    )
+    common = {
+        "method": "stl",
+        "period": 12,
+        "with_uncertainty": True,
+        "n_bootstrap": 50,
+        "random_state": 5,
+    }
+    independent = trend_with_deseasonalization(
+        data,
+        SavitzkyGolay(window_length=15),
+        noise=Given(independent_covariance),
+        **common,
+    )
+    dependent = trend_with_deseasonalization(
+        data,
+        SavitzkyGolay(window_length=15),
+        noise=Given(dependent_covariance),
+        **common,
+    )
+    independent_error = float(
+        independent["derivative_standard_error"].iloc[12:-12].median()
+    )
+    dependent_error = float(
+        dependent["derivative_standard_error"].iloc[12:-12].median()
+    )
+    assert dependent["noise_model"].eq("given_covariance").all()
+    assert dependent_error > 1.1 * independent_error
+
+
+def test_adaptive_spline_keeps_noise_for_point_and_pipeline_fits(monkeypatch):
+    """Covariance-aware penalty selection must survive the outer bootstrap."""
+    original_draws = NoiseFit.gaussian_draws
+    draw_sizes = []
+
+    def tracked_draws(self, *args, **kwargs):
+        draw_sizes.append(args[1])
+        return original_draws(self, *args, **kwargs)
+
+    monkeypatch.setattr(NoiseFit, "gaussian_draws", tracked_draws)
+    result = trend_with_deseasonalization(
+        dependent_seasonal_series(n=72),
+        SmoothingSpline(),
+        method="stl",
+        period=12,
+        with_uncertainty=True,
+        noise=AR1(phi=0.6, standard_deviation=0.5),
+        n_bootstrap=8,
+        random_state=9,
+    )
+    assert result["uncertainty_method"].eq("pipeline_bootstrap").all()
+    assert result["noise_model"].iloc[0].startswith("ar1(phi=0.600")
+    assert np.isfinite(result["generalized_penalty"]).all()
+    assert draw_sizes == [8]
+
+
+def test_native_model_still_rejects_external_pipeline_noise():
+    """The wrapper must not hide an option the selected model cannot use."""
+    with pytest.raises(ValueError, match="models noise internally"):
+        trend_with_deseasonalization(
+            seasonal_series(),
+            GaussianProcess(optimize=False),
+            with_uncertainty=True,
+            noise="ar1",
+            n_bootstrap=2,
+            random_state=1,
+        )
+
+
+@pytest.mark.parametrize("route", ["residual", "parametric"])
+def test_every_failed_pipeline_refit_raises_instead_of_falling_back(monkeypatch, route):
+    """A broken outer bootstrap must never return a conditional interval."""
+    original = seasonal_module.deseasonalize
+    calls = 0
+
+    def fail_after_initial_decomposition(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return original(*args, **kwargs)
+        raise ValueError("planted decomposition failure")
+
+    monkeypatch.setattr(
+        seasonal_module, "deseasonalize", fail_after_initial_decomposition
+    )
+    noise = Given(0.4**2 * np.eye(N)) if route == "parametric" else None
+    with pytest.raises(
+        RuntimeError, match="seasonal pipeline bootstrap failed for every replicate"
+    ):
+        trend_with_deseasonalization(
+            seasonal_series(),
+            SavitzkyGolay(window_length=21),
+            with_uncertainty=True,
+            noise=noise,
+            n_bootstrap=3,
             random_state=1,
         )
 

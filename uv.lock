@@ -2010,8 +2010,8 @@ wheels = [
 
 [[package]]
 name = "simcheck"
-version = "0.0.0.post4.dev0+cc8ef3f"
-source = { git = "https://github.com/finite-sample/simcheck#cc8ef3f13c33ecbd45bc977304bdc6368b2690e1" }
+version = "0.1.0.post3.dev0+d3522ae"
+source = { git = "https://github.com/finite-sample/simcheck#d3522ae43e823606629b6eb3cfae30a3022b9eaa" }
 dependencies = [
     { name = "numpy" },
 ]

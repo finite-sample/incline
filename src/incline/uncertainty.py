@@ -50,6 +50,18 @@ LINEARITY_TOLERANCE = 1e-8
 SIMULTANEOUS_DRAWS = 2000
 
 
+def bootstrap_block_size(n: int) -> int:
+    """Choose the standard cube-root block length for dependent resampling.
+
+    Args:
+        n: Number of observations.
+
+    Returns:
+        Block length, with at least two observations.
+    """
+    return max(2, round(n ** (1 / 3)))
+
+
 def probe_operator(
     evaluate: Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
     n: int,
@@ -251,8 +263,11 @@ def residual_bootstrap(
             from the series when None.
 
     Returns:
-        Tuple of (se, ci_lower, ci_upper), or (None, None, None) if every
-        replicate failed.
+        Tuple of (se, ci_lower, ci_upper), or (None, None, None) when the
+        series has no estimable noise.
+
+    Raises:
+        RuntimeError: If every refit fails or returns the wrong shape.
     """
     rng = np.random.default_rng(random_state)
 
@@ -300,12 +315,15 @@ def residual_bootstrap(
 
     replicates: list[npt.NDArray[np.float64]] = []
     failures = 0
+    first_failure: Exception | None = None
     for _ in range(n_bootstrap):
         drawn = _draw_residuals(residuals, n, block_size, rng) * target
         try:
             estimate = np.asarray(refit(fitted + drawn), dtype=float)
-        except Exception:  # one bad replicate must not abort the rest
+        except Exception as exc:  # one bad replicate must not abort the rest
             failures += 1
+            if first_failure is None:
+                first_failure = exc
             continue
         if len(estimate) == n:
             replicates.append(estimate)
@@ -313,11 +331,8 @@ def residual_bootstrap(
             failures += 1
 
     if not replicates:
-        warnings.warn(
-            "Every bootstrap replicate failed; no standard errors computed.",
-            stacklevel=2,
-        )
-        return None, None, None
+        message = "Every bootstrap replicate failed; no interval can be computed."
+        raise RuntimeError(message) from first_failure
 
     if failures:
         warnings.warn(
@@ -366,16 +381,22 @@ def parametric_bootstrap(
 
     Returns:
         Tuple of ``(standard_error, ci_lower, ci_upper)``.
+
+    Raises:
+        RuntimeError: If every refit fails or returns the wrong shape.
     """
     fitted = np.asarray(fitted, dtype=np.float64)
     errors = noise.gaussian_draws(len(fitted), n_bootstrap, random_state)
     replicates: list[npt.NDArray[np.float64]] = []
     failures = 0
+    first_failure: Exception | None = None
     for error in errors:
         try:
             estimate = np.asarray(refit(fitted + error), dtype=np.float64)
-        except Exception:  # one bad replicate must not abort the rest
+        except Exception as exc:  # one bad replicate must not abort the rest
             failures += 1
+            if first_failure is None:
+                first_failure = exc
             continue
         if estimate.shape == fitted.shape:
             replicates.append(estimate)
@@ -383,11 +404,10 @@ def parametric_bootstrap(
             failures += 1
 
     if not replicates:
-        warnings.warn(
-            "Every parametric bootstrap replicate failed; no standard errors computed.",
-            stacklevel=2,
+        message = (
+            "Every parametric bootstrap replicate failed; no interval can be computed."
         )
-        return None, None, None
+        raise RuntimeError(message) from first_failure
     if failures:
         warnings.warn(
             f"{failures} of {n_bootstrap} parametric bootstrap replicates failed.",

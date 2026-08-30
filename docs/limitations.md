@@ -121,19 +121,20 @@ Propagating hyperparameter uncertainty properly is not implemented.
 ## Seasonal adjustment costs uncertainty, and that is now counted
 
 The seasonal component is estimated from the same data as the trend, so an
-interval that treats it as known is too narrow. Measured on a linear trend with
-a twelve-period cycle:
+interval that treats it as known is too narrow. Asking
+`trend_with_deseasonalization` for a standard error therefore bootstraps the
+**whole pipeline**: it simulates the requested noise process, then redoes the
+decomposition and trend fit together. IID and heteroskedastic models resample
+standardized residuals at the fitted scale. AR(1) and supplied covariance models
+draw from their joint covariance, so dependence is not discarded.
 
-| | coverage of a nominal 95% interval | reported SE ÷ actual spread |
-|---|---|---|
-| treating the seasonal fit as exact | 0.917 | 0.861 |
-| **what `trend_with_deseasonalization` does** | 0.983 | 1.052 |
-| oracle — true seasonal component known | 0.933 | — |
-
-Asking `trend_with_deseasonalization` for a standard error bootstraps the
-**whole pipeline**: it resamples the decomposition's residuals, redoes the
-decomposition *and* the trend fit together, and takes the interval from the
-spread. It errs slightly conservative, which is the right direction.
+The release gate generates a linear trend, twelve-period cycle, and known AR(1)
+errors, then compares the mean reported standard error with the estimator's
+sampling standard deviation. With 100 fixed-seed replicates the ratio is about
+0.96 when the AR(1) model is supplied, versus 0.59 for the deliberately
+misspecified IID negative control. The full gate repeats the study 400 times.
+This checks uncertainty calibration separately from smoothing bias and interval
+centering.
 
 That costs `n_bootstrap` decompositions, and is only paid when `with_uncertainty=True`. To
 skip it, compose the two steps yourself — which states the assumption instead of

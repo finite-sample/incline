@@ -38,10 +38,11 @@ from scipy.sparse import csc_matrix
 from sklearn.preprocessing import PolynomialFeatures
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
-from .noise import NoiseModel, resolve_noise
+from .noise import NoiseModel, describe_noise_fit, resolve_noise
 from .result import Provenance, TrendEstimate
 from .uncertainty import (
     bias_corrected_operator,
+    bootstrap_block_size,
     operator_variance,
     parametric_bootstrap,
     residual_bootstrap,
@@ -89,20 +90,6 @@ def _validate_scale(scale: float) -> float:
     if not _finite_number(scale) or not 0.0 < float(scale) <= 1.0:
         raise ValueError("scale must be finite and in (0, 1]")
     return float(scale)
-
-
-def _noise_label(noise: NoiseFit) -> str:
-    """Describe a fitted scalar noise model for result provenance."""
-    if noise.structure == "ar1":
-        return (
-            f"ar1(phi={noise.phi:.3f}, "
-            f"standard_deviation={noise.standard_deviation:.4g})"
-        )
-    if noise.structure == "heteroskedastic":
-        return "heteroskedastic"
-    if noise.structure == "given":
-        return "given_covariance"
-    return f"iid(standard_deviation={noise.standard_deviation:.4g})"
 
 
 def _cache_bytes() -> int:
@@ -509,7 +496,7 @@ class Smoother(ABC):
             derivative_order,
             noise_fit,
         )
-        noise_label = _noise_label(noise_fit) if noise_fit is not None else None
+        noise_label = describe_noise_fit(noise_fit) if noise_fit is not None else None
         estimate = self._assemble(
             axis,
             y,
@@ -584,7 +571,7 @@ class Smoother(ABC):
 
         if noise_model is None or noise_fit is None:
             raise RuntimeError("uncertainty requires a fitted noise model")
-        noise_label = _noise_label(noise_fit)
+        noise_label = describe_noise_fit(noise_fit)
 
         if self.is_linear:
             _, operator = self.operators(axis, derivative_order)
@@ -678,7 +665,7 @@ class Smoother(ABC):
                 confidence_level=confidence_level,
                 random_state=random_state,
             )
-        block = _block_size(axis.n) if noise_fit.phi else None
+        block = bootstrap_block_size(axis.n) if noise_fit.phi else None
         return residual_bootstrap(
             y=y,
             fitted=estimate.values,
@@ -772,7 +759,7 @@ class Smoother(ABC):
             return estimate
 
         noise_fit = resolve_noise(noise).estimate(y, axis)
-        noise_label = _noise_label(noise_fit)
+        noise_label = describe_noise_fit(noise_fit)
         standard_errors = np.sqrt(operator_variance(corrected, noise_fit))
         multiplier = (
             simultaneous_critical_value(
@@ -794,11 +781,6 @@ class Smoother(ABC):
             multiplier,
             simultaneous,
         )
-
-
-def _block_size(n: int) -> int:
-    """Block length for a dependent bootstrap, the usual n^(1/3) rule."""
-    return max(2, round(n ** (1 / 3)))
 
 
 def _odd(value: int, minimum: int) -> int:
