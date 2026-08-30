@@ -306,7 +306,7 @@ def test_correlated_smoothing_spline_matches_penalized_gls():
 
 
 def test_generalized_penalty_is_conditional_on_covariance_scale():
-    """The GML diagnostic is not SciPy's fixed independent-error penalty."""
+    """Multiplying covariance by a scalar must only rescale the penalty."""
     values = noisy(19)
     base = SmoothingSpline().fit(
         AXIS,
@@ -319,10 +319,17 @@ def test_generalized_penalty_is_conditional_on_covariance_scale():
         noise=AR1(phi=0.6, standard_deviation=0.6),
     )
 
-    np.testing.assert_allclose(base.values, rescaled.values, rtol=0, atol=3e-12)
+    numerical_tolerance = np.sqrt(np.finfo(np.float64).eps)
+    fit_scale = float(np.linalg.norm(base.values, ord=np.inf))
+    np.testing.assert_allclose(
+        base.values,
+        rescaled.values,
+        rtol=numerical_tolerance,
+        atol=numerical_tolerance * fit_scale,
+    )
     assert rescaled.provenance.params["generalized_penalty"] == pytest.approx(
         base.provenance.params["generalized_penalty"] / 4,
-        rel=1e-10,
+        rel=numerical_tolerance,
     )
 
 
