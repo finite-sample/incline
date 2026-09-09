@@ -153,7 +153,9 @@ def _detect_by_autocorrelation(
     if n <= 2 * max_period:
         return None
     try:
-        correlation = acf(y, nlags=max_period, fft=True)
+        # statsmodels is untyped and acf can return a NamedTuple with None
+        # fields (0.15+); pyright infers the union, so pin the array here.
+        correlation = np.asarray(acf(y, nlags=max_period, fft=True), dtype=np.float64)
     except Exception as exc:  # a failed detector should not abort the search
         warnings.warn(f"Autocorrelation seasonality check failed: {exc}", stacklevel=3)
         return None
