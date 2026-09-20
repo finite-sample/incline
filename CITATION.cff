@@ -33,7 +33,6 @@ authors:
     email: "suriyant@gmail.com"
   - family-names: "Sood"
     given-names: "Gaurav"
-    email: "gsood07@gmail.com"
 preferred-citation:
   type: software
   title: "incline: Comprehensive Trend Estimation for Noisy Time Series"
@@ -43,7 +42,6 @@ preferred-citation:
       email: "suriyant@gmail.com"
     - family-names: "Sood"
       given-names: "Gaurav"
-      email: "gsood07@gmail.com"
   version: "2.0.0"
   date-released: "2026-08-28"
   url: "https://github.com/finite-sample/incline"
