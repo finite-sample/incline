@@ -30,7 +30,6 @@ license: MIT
 authors:
   - family-names: "Laohaprapanon"
     given-names: "Suriyan"
-    email: "suriyant@gmail.com"
   - family-names: "Sood"
     given-names: "Gaurav"
 preferred-citation:
@@ -39,7 +38,6 @@ preferred-citation:
   authors:
     - family-names: "Laohaprapanon"
       given-names: "Suriyan"
-      email: "suriyant@gmail.com"
     - family-names: "Sood"
       given-names: "Gaurav"
   version: "2.0.0"
