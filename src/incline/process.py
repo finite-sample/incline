@@ -12,7 +12,7 @@ the two endpoint variances as though they were independent:
 
 Two points a thousandth of a length scale apart have posterior correlation
 essentially one, so almost all of that variance cancels in reality and none of
-it cancelled in the formula. The reported standard error came out 3,614 times
+it canceled in the formula. The reported standard error came out 3,614 times
 too large, the intervals swallowed every plausible value, and the significance
 flag fired on 0% of a series with an obvious trend. Differentiating the kernel
 instead is exact, has no step size, and costs one solve.

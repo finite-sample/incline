@@ -34,7 +34,7 @@ tests below separate them, hardest-to-fake first:
    average sits at 0.95-1.02, so the average is both the right quantity and the
    stable one.
 
-Coverage where bias dominates is *characterised* rather than gated at nominal --
+Coverage where bias dominates is *characterized* rather than gated at nominal --
 see the kink test at the bottom. Gating it at 0.95 would assert something untrue.
 
 **The unit of replication is the replicate, never the point.** Whether the
@@ -389,7 +389,7 @@ def test_the_interval_covers_the_value_it_is_centered_on(
     right. That must hold everywhere.
 
     E[f-hat] is estimated from an **independent** block of replicates. Using the
-    same replicates would centre the target by construction and make the test
+    same replicates would center the target by construction and make the test
     easier than it looks.
 
     Measured: 0.961 for the spline, 0.985 for the L1 filter.
@@ -493,7 +493,7 @@ def test_average_coverage_across_the_function(name, reps, studies):
 
 
 # --------------------------------------------------------------------------
-# 5. Where it breaks, characterised rather than gated at nominal.
+# 5. Where it breaks, characterized rather than gated at nominal.
 # --------------------------------------------------------------------------
 
 

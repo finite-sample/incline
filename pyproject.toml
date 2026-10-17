@@ -137,3 +137,6 @@ include = ["src"]
 typeCheckingMode = "standard"
 
 [tool.preen]
+
+[tool.codespell]
+builtin = "clear,rare,en-GB_to_en-US"
