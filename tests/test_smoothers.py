@@ -867,10 +867,12 @@ def test_adaptive_spline_is_equivariant_to_a_stated_noise_scale():
         rtol=0,
         atol=2e-8,
     )
+    # GML numerically optimizes the penalty at each scale. Compare its
+    # scale equivariance to one part per million across solver platforms.
     np.testing.assert_allclose(
         large.standard_error,
         10.0 * small.standard_error,
-        rtol=0,
+        rtol=1e-6,
         atol=5e-9,
     )
 
