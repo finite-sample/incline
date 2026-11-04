@@ -13,7 +13,7 @@ ndarray and nothing downstream expected that.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -91,9 +91,8 @@ class TimeAxis:
             index = index.to_timestamp()
 
         if isinstance(index, pd.DatetimeIndex):
-            values = np.asarray(
-                (index - index[0]).total_seconds() / 86400.0, dtype=np.float64
-            )
+            elapsed = cast("pd.TimedeltaIndex", index - index[0])
+            values = np.asarray(elapsed.total_seconds() / 86400.0, dtype=np.float64)
             unit = "days"
         else:
             try:
