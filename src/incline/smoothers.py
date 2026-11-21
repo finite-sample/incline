@@ -35,7 +35,6 @@ from scipy.linalg import cholesky, eigh, solve_banded, solve_triangular
 from scipy.optimize import lsq_linear, minimize_scalar
 from scipy.signal import savgol_coeffs, savgol_filter
 from scipy.sparse import csc_matrix
-from sklearn.preprocessing import PolynomialFeatures
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from .noise import NoiseModel, describe_noise_fit, resolve_noise
@@ -1043,7 +1042,6 @@ class LocalPolynomial(Smoother):
         h = self.bandwidth * np.ptp(axis.x)
         values = np.full(n, np.nan)
         derivative = np.full(n, np.nan)
-        features = PolynomialFeatures(degree=self.degree, include_bias=True)
 
         for i in range(n):
             centered = axis.x - axis.x[i]
@@ -1053,7 +1051,7 @@ class LocalPolynomial(Smoother):
                 raise ValueError(
                     "bandwidth leaves too few weighted observations for the degree"
                 )
-            design = features.fit_transform(centered[mask].reshape(-1, 1))
+            design = np.vander(centered[mask], N=self.degree + 1, increasing=True)
             w = weights[mask]
             try:
                 xtw = design.T * w
@@ -1086,7 +1084,6 @@ class LocalPolynomial(Smoother):
         h = self.bandwidth * np.ptp(axis.x)
         smoothing = np.zeros((n, n), dtype=np.float64)
         derivative = np.zeros((n, n), dtype=np.float64)
-        features = PolynomialFeatures(degree=self.degree, include_bias=True)
         scale = float(math.factorial(derivative_order))
 
         for i in range(n):
@@ -1097,7 +1094,7 @@ class LocalPolynomial(Smoother):
                 raise ValueError(
                     "bandwidth leaves too few weighted observations for the degree"
                 )
-            design = features.fit_transform(centered[mask].reshape(-1, 1))
+            design = np.vander(centered[mask], N=self.degree + 1, increasing=True)
             w = weights[mask]
             xtw = design.T * w
             try:
