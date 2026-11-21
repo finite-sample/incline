@@ -1080,3 +1080,17 @@ def test_an_infinite_value_is_refused_too():
     y[20] = np.inf
     with pytest.raises(ValueError, match="missing value"):
         SavitzkyGolay(window_length=15).fit(AXIS, y, derivative_order=1)
+
+
+def test_local_polynomial_reproduces_cubic_second_derivative() -> None:
+    """The local design orders powers from constant through cubic."""
+    axis = TimeAxis.positional(28)
+    x = axis.x
+    y = 2 - x + 0.3 * x**2 - 0.01 * x**3
+    expected = 0.6 - 0.06 * x
+    smoother = LocalPolynomial(degree=3, bandwidth=0.45)
+    result = smoother.evaluate(axis, y, derivative_order=2)
+    matrices = smoother.analytic_operators(axis, derivative_order=2)
+    assert matrices is not None
+    np.testing.assert_allclose(result.derivative, expected, atol=1e-11)
+    np.testing.assert_allclose(matrices[1] @ y, expected, atol=1e-11)
