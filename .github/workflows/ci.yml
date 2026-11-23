@@ -20,7 +20,7 @@ jobs:
     with:
       wheel-import: incline
       # The canon default floor of 3.11 is below requires-python (>=3.12).
-      python-versions: '["3.12", "3.14"]'
+      python-versions: '["3.13", "3.14"]'
       # Fast tier measured 92% on adoption; the floor leaves modest headroom.
       coverage-floor: 90
       run-preen: true
