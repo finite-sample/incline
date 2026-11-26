@@ -28,7 +28,7 @@ dependencies = [
     "scipy>=1.15.3",
     "statsmodels>=0.14.3",
     "scikit-learn>=1.5.2",
-    "matplotlib>=3.9.2",
+    "matplotlib>=3.10.7",
 ]
 
 [project.urls]
