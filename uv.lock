@@ -755,10 +755,10 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", specifier = ">=3.9.2" },
-    { name = "numpy", specifier = ">=2.1.0" },
+    { name = "numpy", specifier = ">=2.4.6" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "scikit-learn", specifier = ">=1.5.2" },
-    { name = "scipy", specifier = ">=1.14.1" },
+    { name = "scipy", specifier = ">=1.15.3" },
     { name = "statsmodels", specifier = ">=0.14.3" },
 ]
 
